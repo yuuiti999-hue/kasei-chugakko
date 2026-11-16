@@ -63,7 +63,7 @@ root.innerHTML =
   '<div id="sc-top"><button id="sc-bgm" type="button">♪</button><button id="sc-rst" type="button">最初から</button></div>' +
   '<div id="sc-big" hidden><div id="sc-bign"></div><div id="sc-bigt"></div><div id="sc-bigs"></div></div>' +
   '<div id="sc-note" hidden></div><div id="sc-tap" hidden></div><div id="sc-hint" hidden></div><div id="sc-tray" hidden></div><div id="sc-panel" hidden></div>' +
-  '<div id="sc-game" hidden><div id="sc-gtitle"></div><canvas id="sc-cv"></canvas><div id="sc-gmsg"></div></div>' +
+  '<div id="sc-game" hidden><div id="sc-gtitle"></div><canvas id="sc-cv"></canvas><div id="sc-gmsg"></div></div><div id="sc-riv" hidden></div>' +
   '<div id="sc-dlg" hidden><div id="sc-bub"><div id="sc-ava"></div><div id="sc-dtx"><div id="sc-dname"></div><div id="sc-dtext"></div></div><div id="sc-dnext">▼</div></div></div>';
 document.body.appendChild(root);
 $('sc-bgm').addEventListener('click', function(){ var b = $('bgmbtn'); if (b) b.click(); this.classList.toggle('off', !E.BGM.on); });
@@ -109,20 +109,26 @@ function esc(t){ return String(t).replace(/[&<>"]/g, function(c){ return {'&':'&
 function nextBtn(label){ return '<button type="button" class="sc-go" id="sc-ok">' + (label || '次へ') + '</button>'; }
 function waitOk(){ return new Promise(function(res){ $('sc-ok').addEventListener('click', function(){ E.sfx('click'); closePanel(); res(); }); }); }
 async function info(title, body, tip){
-  panel('<h2>' + title + '</h2><div class="sc-body">' + body + '</div>' + (tip ? '<div class="sc-tip"><span>豆知識</span>' + tip + '</div>' : '') + nextBtn(), 'low');
+  panel('<h2>' + title + '</h2>' + (body ? '<div class="sc-body">' + body + '</div>' : '') + (tip ? '<div class="sc-tip"><span>豆知識</span>' + tip + '</div>' : '') + nextBtn(), 'low');
   await waitOk();
 }
+/* a reason or tip is either one line, or [one line, the rest]: the rest stays folded until 「くわしく」 is pressed */
+function fold(t){ return typeof t === 'string' ? t : t[0] + '<span class="sc-more" hidden>' + t[1] + '</span>'; }
 /* three-choice quiz: always explains why, then moves on (no time limit) */
 function quiz(q){
   return new Promise(function(res){
-    var p = panel('<h2>' + q.title + '</h2><div class="sc-body">' + q.q + '</div><div class="sc-opts">' +
+    var p = panel('<h2>' + q.title + '</h2>' + (q.q ? '<div class="sc-body">' + q.q + '</div>' : '') + '<div class="sc-opts">' +
       q.opts.map(function(o, i){ return '<button type="button" data-i="' + i + '"><b>' + 'ABC'[i] + '</b>' + esc(o) + '</button>'; }).join('') + '</div>', 'low');
     Array.prototype.forEach.call(p.querySelectorAll('.sc-opts button'), function(b){
       b.addEventListener('click', async function(){
         var i = +b.dataset.i, ok = i === q.ans; E.sfx(ok ? 'ok' : 'bad'); emote('P', ok ? 'joy' : 'sad'); emote('T', 'nod');
-        var html = ok ? '<p class="ok">正解！ +100点</p><p>' + q.why[i] + '</p>'
-          : '<p class="bad">ざんねん。「' + esc(q.opts[i]) + '」はちがいます</p><p>' + q.why[i] + '</p><p class="ok">正解は「' + esc(q.opts[q.ans]) + '」</p><p>' + q.why[q.ans] + '</p>';
-        panel('<h2>' + q.title + '</h2><div class="sc-body">' + html + '</div>' + (q.tip ? '<div class="sc-tip"><span>豆知識</span>' + q.tip + '</div>' : '') + nextBtn(), 'low');
+        var html = ok ? '<p class="ok">正解！ +100点</p><p>' + fold(q.why[i]) + '</p>'
+          : '<p class="bad">ざんねん。「' + esc(q.opts[i]) + '」はちがいます</p><p>' + fold(q.why[i]) + '</p><p class="ok">正解は「' + esc(q.opts[q.ans]) + '」</p><p>' + fold(q.why[q.ans]) + '</p>';
+        var tip = q.tip ? '<div class="sc-tip"><span>豆知識</span>' + fold(q.tip) + '</div>' : '';
+        var pp = panel('<h2>' + q.title + '</h2><div class="sc-body">' + html + '</div>' + tip +
+          (/sc-more/.test(html + tip) ? '<button type="button" class="sc-mbtn" id="sc-mbtn">くわしく</button>' : '') + nextBtn(), 'low');
+        var mb = $('sc-mbtn');
+        if (mb) mb.addEventListener('click', function(){ E.sfx('click'); Array.prototype.forEach.call(pp.querySelectorAll('.sc-more'), function(s){ s.hidden = false; }); mb.hidden = true; });
         await waitOk(); res(ok);
       });
     });
@@ -138,17 +144,40 @@ async function bell(per, subject, place){
   var b = $('sc-big'); b.hidden = true; void b.offsetWidth; b.hidden = false; chime();
   await sleep(2300); b.hidden = true;
 }
-/* ranking after every period */
-var GAINS = {
-  p1: function(){ return { ha:[100, 100, 200][Math.random()*3|0], mi:200 }; },
-  p2: function(){ return { ha:rnd(165,195), mi:rnd(95,140) }; },
-  p3: function(){ return { ha:rnd(85,125), mi:rnd(125,150) }; },
-  p4: function(){ return { ha:rnd(90,130), mi:rnd(110,145) }; },
-  p5: function(){ return { ha:rnd(70,92) + racePts.ha, mi:rnd(62,86) + racePts.mi }; },
-  p6: function(){ return { ha:rnd(110,160), mi:rnd(165,195) }; }
+/* ranking after every period.  The rivals' points are decided when the lesson starts (PLAN), one share per mini-game, so the
+   live gauges in the rhythm games and the ranking always show the same numbers.  Rhythm shares are targets: rivalsFor()
+   turns them into a note-by-note run just before the game and stores the exact result back.
+   Strength (out of 100): the stronger rival sits a little above a normal run (about 75), the other a little below. */
+var rint = function(a, b){ return a + Math.floor(Math.random()*(b - a + 1)); };   // whole points (rnd() rounds to 5s, which would overshoot these ranges)
+var PLANS = {
+  p1: function(){ return { ha:{ quiz:[100, 100, 200][Math.random()*3|0] }, mi:{ quiz:200 } }; },
+  p2: function(){ return { ha:{ hurdle:rnd(85,100), train:rint(80,88) }, mi:{ hurdle:rnd(40,70), train:rint(55,70) } }; },
+  p3: function(){ return { ha:{ all:rnd(85,125) }, mi:{ all:rnd(125,150) } }; },
+  p4: function(){ return { ha:{ all:rnd(90,130) }, mi:{ all:rnd(110,145) } }; },
+  p5: function(){ return { ha:{ dance:rint(78,88), race:70 }, mi:{ dance:rint(62,76), race:40 } }; },   // race: replaced by the real finishing order
+  p6: function(){ return { ha:{ harvest:rint(62,76), quiz:Math.random() < .7 ? 100 : 0 }, mi:{ harvest:rint(78,88), quiz:100 } }; }
 };
+var PLAN = {};
+function lesson(id){ PLAN[id] = PLANS[id](); }
+function plan(id){ if (!PLAN[id]) lesson(id); return PLAN[id]; }
+function gains(id){ var p = plan(id), sum = function(o){ var t = 0; for (var k in o) t += o[k]; return t; }; return { ha:sum(p.ha), mi:sum(p.mi) }; }
+/* a rival's run in a rhythm game: one result per note (1 = ピッタリ, .6 = OK, 0 = ミス) that adds up to about `target` points */
+function rivalRun(n, target){
+  var T = target/100*n, m = Math.random()*3|0, p;
+  for (;;){ p = Math.round((T - .6*(n - m))/.4); if (p >= 0 || m >= n) break; m++; }
+  p = clamp(p, 0, n - m);
+  var v = []; for (var i=0;i<n;i++) v.push(i < p ? 1 : i < n - m ? .6 : 0);
+  for (i=n-1;i>0;i--){ var j = Math.random()*(i+1)|0, t = v[i]; v[i] = v[j]; v[j] = t; }
+  return v;
+}
+function runPts(v){ var s = 0; v.forEach(function(x){ s += x; }); return Math.round(s/v.length*100); }
+function rivalsFor(id, part, n){
+  var p = plan(id), out = {};
+  [['H', 'ha'], ['M', 'mi']].forEach(function(q){ var v = rivalRun(n, p[q[1]][part]); p[q[1]][part] = runPts(v); out[q[0]] = v; });
+  return out;
+}
 async function rank(id, label, mine, max){
-  var g = GAINS[id](); S.pts.ha += g.ha; S.pts.mi += g.mi;
+  var g = gains(id); S.pts.ha += g.ha; S.pts.mi += g.mi;
   S.log.push({ label:label, me:mine, max:max, ha:g.ha, mi:g.mi });
   var rows = [ { k:'P', n:S.name, g:mine, t:S.pts.me, me:true }, { k:'H', n:'ハヤト', g:g.ha, t:S.pts.ha }, { k:'M', n:'ミライ', g:g.mi, t:S.pts.mi } ];
   rows.sort(function(a, b){ return b.t - a.t; });
@@ -180,7 +209,13 @@ function buildPeople(){
 function mySuit(on){ E.player.setCloth(CLOTHES[S.cloth].col); E.player.gold = !!CLOTHES[S.cloth].gold; E.player.setSuit(on); }
 function suits(on){ mySuit(on); people.forEach(function(c){ c.suit(on); }); }
 function setGuide(k){ var g = GUIDES[k]; WHO.G.name = g.name; WHO.G.shirt = g.shirt; NPC.G.c.setLine(g.pack); NPC.G.c.setCloth(g.pack); }
-function put(ch, pos, faceA){ ch.root.position.set(pos.x, E.groundAt(pos.x, pos.z), pos.z); ch.root.rotation.y = faceA; ch.root.visible = true; ch.sit = ch.eat = false; ch.c.legL.rotation.x = ch.c.legR.rotation.x = 0; }
+function put(ch, pos, faceA){ ch.root.position.set(pos.x, E.groundAt(pos.x, pos.z), pos.z); ch.root.rotation.y = ch.face = faceA; ch.root.visible = true; ch.sit = ch.eat = false; ch.squat = ch.pick = ch.spin = 0; ch.c.legL.rotation.x = ch.c.legR.rotation.x = 0; }
+/* rhythm games: Hayato on the player's left and Mirai on the right, facing the same way, doing the same moves */
+function lineUp(gap){
+  var f = P.face, rx = Math.cos(f), rz = -Math.sin(f);
+  [['H', -gap], ['M', gap]].forEach(function(q){ put(NPC[q[0]], { x:P.x + rx*q[1], z:P.z + rz*q[1] }, f); });
+}
+function cheer(){ ['T', 'G'].forEach(function(k){ var c = NPC[k]; if (c && c.root.visible) c.hop = 1; }); }   // the teacher and the crew bounce along with the player's hits
 function hideNPCs(){ people.forEach(function(c){ c.root.visible = false; }); }
 function setP(pos, faceA){
   P.x = pos.x; P.z = pos.z; P.y = E.groundAt(P.x, P.z); P.vx = P.vz = P.vy = 0; P.ground = true; P.face = faceA;
@@ -238,8 +273,16 @@ SCH.tick = function(dt){
     p.spoke = speaker === p;
     if (p.sit){ c.legL.rotation.x = c.legR.rotation.x = -1.45; }
     if (p.eat && speaker !== p && (!p.act || !p.act.n)){ var ea = Math.sin(now*3.2 + p.ph); c.armR.rotation.x = -(1.0 + ea*.45); c.armR.rotation.z = -.25; c.setMouth(ea > .55); }
+    var mv = 0;                                            // rhythm-game moves: squat, harvest bend, and a spin riding on the hop (dance)
+    if (p.squat > 0){
+      p.squat = Math.max(0, p.squat - dt*3); var sq = Math.sin(Math.min(1, p.squat)*Math.PI);
+      c.legL.rotation.x = c.legR.rotation.x = sq*.9; c.armL.rotation.x = c.armR.rotation.x = -sq*1.4; mv -= sq*.16;
+      if (!p.squat) c.legL.rotation.x = c.legR.rotation.x = 0;
+    }
+    if (p.pick > 0){ p.pick = Math.max(0, p.pick - dt*2.6); var pk = Math.sin(Math.min(1, p.pick)*Math.PI); c.body.rotation.x = .55*pk; c.armL.rotation.x = c.armR.rotation.x = -1.2*pk; mv -= .05*pk; }
+    if (p.spin){ p.root.rotation.y = p.face + (1 - p.hop)*6.2832; if (!p.hop){ p.root.rotation.y = p.face; p.spin = 0; } }
     var y = applyAct(c, p.act, dt, now);
-    p.body.position.y = Math.sin(now*2 + p.ph)*.012 + hu*.22 + y + bounce - (p.sit ? .26 : 0);
+    p.body.position.y = Math.sin(now*2 + p.ph)*.012 + hu*.22 + y + bounce + mv - (p.sit ? .26 : 0);
   }
   for (i=0;i<tickers.length;i++) tickers[i](dt);
 };
@@ -285,7 +328,7 @@ var SCENES = {
   gym: function(){
     indoor(); setGuide('pe'); dress('treadmill');
     setP(I(-.6, .6), 0);
-    put(NPC.T, I(.7, -1.2), 0); put(NPC.H, I(-1.9, -.9), 0); put(NPC.M, I(.9, 1.9), 0); put(NPC.G, I(-3.1, -.3), .3);
+    put(NPC.T, I(.7, -1.2), 0); lineUp(1.3); put(NPC.G, I(-3.1, -.3), .3);
     setShot({ x:E.INT.x - .9, y:E.INT.y + .9, z:E.INT.z, yaw:0, pitch:.5, dist:8 });
   },
   solar: function(){
@@ -297,7 +340,7 @@ var SCENES = {
   farm: function(){
     indoor(); setGuide('farm');
     setP(I(0, -15.3), 0);
-    put(NPC.T, I(2.3, -15.3), 0); put(NPC.G, I(-2.5, -15.3), 0); put(NPC.H, I(4.4, -15.4), 0); put(NPC.M, I(-4.6, -15.4), 0);
+    put(NPC.T, I(3.1, -15.3), 0); put(NPC.G, I(-3.1, -15.3), 0); lineUp(1.3);
     setShot({ x:E.INT.x, y:E.INT.y - 5 + .8, z:E.INT.z - 16.4, yaw:0, pitch:.62, dist:11.5 });
   },
   life: function(){
@@ -309,7 +352,7 @@ var SCENES = {
   music: function(){
     indoor(); dress('speakers');
     var y = .6; setP(I(-.5, .8), y);
-    put(NPC.T, I(-2.5, -.3), y); put(NPC.H, I(-.7, -1.3), y); put(NPC.M, I(1.1, -.5), y);
+    put(NPC.T, I(-2.5, -.3), y); lineUp(1.3);
     setShot({ x:E.INT.x + .3, y:E.INT.y + .9, z:E.INT.z + 1.9, yaw:y, pitch:.5, dist:8 });
   },
   sunset: function(){
@@ -359,7 +402,44 @@ function mkBeats(bars, n){
   return n ? out.slice(0, n) : out;
 }
 
-/* ---------- mini-game: rhythm (works without sound: tap when the note sits in the ring) ---------- */
+/* ---------- rhythm games: live gauges for the player, Hayato and Mirai (rows re-sort when someone overtakes) ----------
+   The rivals do not play the notes: their note-by-note results were decided before the game (rivalsFor), and each one
+   is counted when that note's window closes, at the same moment as the player's.  */
+var RIV_COL = { P:'#ff8a1e', H:'#3f7fd9', M:'#e86a9a' }, POP_FONT = '"Hiragino Maru Gothic ProN","Hiragino Maru Gothic Pro","Zen Maru Gothic","M PLUS Rounded 1c","BIZ UDPGothic","Meiryo",sans-serif';
+function rivalBoard(runs, n){
+  var box = $('sc-riv'), keys = ['P', 'H', 'M'], sum = { P:0, H:0, M:0 }, order = keys.slice(), rows = {}, popT = -9, told = 0;   // told: the player's place in the last pop-up
+  box.innerHTML = keys.map(function(k){
+    return '<div class="sc-rv' + (k === 'P' ? ' me' : '') + '" data-k="' + k + '"><span class="sc-rvno"></span><span class="sc-rava">' + face(who(k)) + '</span><span class="sc-rvn">' +
+      esc(k === 'P' ? S.name : WHO[k].name) + '</span><span class="sc-rvbar"><i style="background:' + RIV_COL[k] + '"></i></span><span class="sc-rvs">0</span></div>';
+  }).join('');
+  keys.forEach(function(k){ rows[k] = box.querySelector('[data-k="' + k + '"]'); });
+  function show(){
+    order.forEach(function(k, i){ rows[k].style.transform = 'translateY(' + i*46 + 'px)'; rows[k].querySelector('.sc-rvno').textContent = (i + 1) + '位'; });
+    keys.forEach(function(k){ rows[k].querySelector('i').style.width = (sum[k]/n*100) + '%'; rows[k].querySelector('.sc-rvs').textContent = Math.round(sum[k]/n*100); });
+  }
+  function flash(){ rows.P.classList.remove('up'); void rows.P.offsetWidth; rows.P.classList.add('up'); }
+  show(); box.hidden = false;
+  return {
+    note:function(i, mine, now){
+      var old = order;
+      sum.P += mine; sum.H += runs.H[i] || 0; sum.M += runs.M[i] || 0;
+      order = old.slice().sort(function(a, b){ return (sum[b] - sum[a]) || (old.indexOf(a) - old.indexOf(b)); });   // ties keep the old order
+      var is = order.indexOf('P'); show();
+      if (i < 2){ told = is; return; }                       // the first notes only set the starting order (no 「ぬかれた」 at the very start)
+      if (is !== told && now - popT > 1.2){                 // a small pop-up when the player passes someone or is passed (at most one per 1.2 s;
+        popT = now;                                          // a change that flips straight back is not announced, one that lasts is announced late)
+        if (is < told){ note(WHO[order[is + 1]].name + 'をぬいた！'); E.sfxTone(880, .1, 'triangle', .14); E.sfxTone(1175, .16, 'triangle', .14, .08); flash(); }
+        else { note(WHO[order[is - 1]].name + 'にぬかれた！'); E.sfxTone(523, .1, 'triangle', .1); E.sfxTone(392, .18, 'triangle', .1, .09); }
+        told = is;
+      }
+    },
+    finish:function(){ var pl = order.indexOf('P') + 1; note(pl === 1 ? '1位！ やったね' : pl + '位'); if (pl === 1) E.sfx('coin'); flash(); },
+    close:function(){ box.hidden = true; box.innerHTML = ''; }
+  };
+}
+/* ---------- mini-game: rhythm (works without sound: tap when the note sits in the ring) ----------
+   o.rivals = { H:[…], M:[…] } (one result per note) shows the gauges; o.onRival(key, result, note) moves Hayato / Mirai in 3D on each beat.
+   Test: window.__sch.autoRhythm = 0.08 makes the game tap by itself with that timing spread (seconds). */
 function rhythm(o){
   return new Promise(function(res){
     var layer = $('sc-game'), cv = $('sc-cv'), g = cv.getContext('2d'), dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -369,16 +449,19 @@ function rhythm(o){
     var spb = 60/o.bpm, lead = spb*4 + .7;
     var notes = o.beats.map(function(b){ return { t:lead + b*spb, s:0 }; }), last = notes[notes.length-1].t;
     var t0 = performance.now()/1000, score = 0, combo = 0, fx = { txt:'', t:-9, col:'#fff' }, alive = true;
+    var board = o.rivals ? rivalBoard(o.rivals, notes.length) : null, ended = false, auto = +(window.__sch && window.__sch.autoRhythm) || 0;
+    if (auto) notes.forEach(function(n){ var u = Math.random() || 1e-9; n.at = n.t + Math.sqrt(-2*Math.log(u))*Math.cos(6.2832*Math.random())*auto; });
     duck(true); if (o.genre) music(o.genre, o.bpm, lead, o.beats[o.beats.length-1] + 2);
+    function judge(n, i, d, now){
+      var p = d <= .09; n.s = p ? 1 : 2; score += p ? 1 : .6; combo++;
+      fx = { txt:p ? 'ピッタリ！' : 'OK', t:now, col:p ? '#ff8a1e' : '#18a0c4' }; E.sfx(p ? 'pop' : 'click');
+      if (o.onHit) o.onHit(i, p);
+    }
     function hit(e){
       if (e && e.preventDefault) e.preventDefault();
       var now = performance.now()/1000 - t0, best = null, bd = 9, bi = -1;
       notes.forEach(function(n, i){ if (n.s === 0){ var d = Math.abs(n.t - now); if (d < bd){ bd = d; best = n; bi = i; } } });
-      if (best && bd <= .2){
-        var p = bd <= .09; best.s = p ? 1 : 2; score += p ? 1 : .6; combo++;
-        fx = { txt:p ? 'ピッタリ！' : 'OK', t:now, col:p ? '#ff8a1e' : '#18a0c4' }; E.sfx(p ? 'pop' : 'click');
-        if (o.onHit) o.onHit(bi, p);
-      }
+      if (best && bd <= .2) judge(best, bi, bd, now);
     }
     function key(e){ if ((e.code === 'Space' || e.code === 'Enter') && !e.repeat){ hit(e); } }
     layer.addEventListener('pointerdown', hit); window.addEventListener('keydown', key);
@@ -394,28 +477,34 @@ function rhythm(o){
       g.fillStyle = 'rgba(255,138,30,.18)'; g.beginPath(); g.arc(tx, y, Rr*1.25, 0, 6.2832); g.fill();
       for (var i=0;i<notes.length;i++){
         var n = notes[i], x = tx + (n.t - now)*sp;
+        if (auto && !n.tapped && now >= n.at){ n.tapped = true; if (n.s === 0 && Math.abs(n.at - n.t) <= .2) judge(n, i, Math.abs(n.at - n.t), now); }   // test player: judged at its own tap time, whatever the frame rate
         if (n.s === 0 && now - n.t > .2){ n.s = -1; combo = 0; fx = { txt:'ミス', t:now, col:'#e0446a' }; }
+        if (board){
+          if (!n.mv && now >= n.t){ n.mv = true; if (o.onRival){ o.onRival('H', o.rivals.H[i], i); o.onRival('M', o.rivals.M[i], i); } }   // the rivals move on the beat…
+          if (!n.done && now - n.t > .2){ n.done = true; board.note(i, n.s === 1 ? 1 : n.s === 2 ? .6 : 0, now); }                     // …and score when the window closes
+        }
         if (x > w*.96 || x < w*.08 || n.s > 0) continue;
         g.globalAlpha = n.s < 0 ? .3 : 1;
         g.fillStyle = o.color || '#18a0c4'; g.beginPath(); g.arc(x, y, Rr, 0, 6.2832); g.fill();
         g.lineWidth = Rr*.16; g.strokeStyle = '#fff'; g.stroke();
-        g.fillStyle = '#fff'; g.font = 'bold ' + Rr*1.05 + 'px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(o.glyph || '♪', x, y + Rr*.05);
+        g.fillStyle = '#fff'; g.font = 'bold ' + Rr*1.05 + 'px ' + POP_FONT; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(o.glyph || '♪', x, y + Rr*.05);
         g.globalAlpha = 1;
       }
       g.textAlign = 'center'; g.textBaseline = 'middle';
       if (now < lead - .2){
         var c = Math.ceil((lead - now)/spb);
-        g.font = 'bold ' + h*.12 + 'px sans-serif'; g.fillStyle = '#fff'; g.strokeStyle = '#4a2e1c'; g.lineWidth = h*.012;
+        g.font = 'bold ' + h*.12 + 'px ' + POP_FONT; g.fillStyle = '#fff'; g.strokeStyle = '#4a2e1c'; g.lineWidth = h*.012;
         var tt = c > 3 ? 'よーい' : String(c); g.strokeText(tt, w/2, h*.4); g.fillText(tt, w/2, h*.4);
       }
       if (now - fx.t < .5){
-        g.globalAlpha = 1 - (now - fx.t)*2; g.font = 'bold ' + Rr*1.5 + 'px sans-serif'; g.lineWidth = Rr*.3; g.strokeStyle = '#fff'; g.fillStyle = fx.col;
+        g.globalAlpha = 1 - (now - fx.t)*2; g.font = 'bold ' + Rr*1.5 + 'px ' + POP_FONT; g.lineWidth = Rr*.3; g.strokeStyle = '#fff'; g.fillStyle = fx.col;
         g.strokeText(fx.txt, tx, y - Rr*2.8 - (now - fx.t)*Rr); g.fillText(fx.txt, tx, y - Rr*2.8 - (now - fx.t)*Rr); g.globalAlpha = 1;
       }
-      if (combo > 1){ g.font = 'bold ' + Rr*.9 + 'px sans-serif'; g.fillStyle = '#4a2e1c'; g.fillText(combo + ' コンボ', w*.86, y); }
-      if (now > last + .9){
+      if (combo > 1){ g.font = 'bold ' + Rr*.9 + 'px ' + POP_FONT; g.fillStyle = '#4a2e1c'; g.fillText(combo + ' コンボ', w*.86, y); }
+      if (board && !ended && now > last + .25){ ended = true; board.finish(); }
+      if (now > last + (board ? 1.8 : .9)){                 // with rivals, hold the final standings a moment longer
         alive = false; layer.removeEventListener('pointerdown', hit); window.removeEventListener('keydown', key); window.removeEventListener('resize', size);
-        g.clearRect(0, 0, w, h); layer.hidden = true; duck(false); res(score/notes.length); return;
+        g.clearRect(0, 0, w, h); layer.hidden = true; duck(false); if (board) board.close(); res(score/notes.length); return;
       }
       requestAnimationFrame(draw);
     }
@@ -573,7 +662,7 @@ function wires(){
 function pick(title, body, items, onPreview){
   return new Promise(function(res){
     var sel = 0;
-    var p = panel('<h2>' + title + '</h2><div class="sc-body">' + body + '</div><div class="sc-cards">' + items.map(function(it, i){
+    var p = panel('<h2>' + title + '</h2>' + (body ? '<div class="sc-body">' + body + '</div>' : '') + '<div class="sc-cards">' + items.map(function(it, i){
       var lock = it.need && S.pts.me < it.need;
       return '<button type="button" data-i="' + i + '"' + (lock ? ' disabled' : '') + '>' + (it.col != null ? '<i style="background:#' + ('00000' + it.col.toString(16)).slice(-6) + '"></i>' : '') +
         '<b>' + esc(it.name) + '</b><small>' + (lock ? 'あと ' + (it.need - S.pts.me) + ' 点でえらべる' : esc(it.note || '')) + '</small></button>';
@@ -684,11 +773,12 @@ function race(){
     bots.forEach(function(b){ poseBot(b, 1); });
     shot = null; hideNPCs(); E.enterRover(); SCH.touch = true;
     var gi = 1, go = false, simT = 0, done = false, pen = 0, sandWas = false, auto = false, sandT = 0;
+    var hint = $('sc-hint'), touchUI = !!(window.matchMedia && matchMedia('(pointer:coarse)').matches);   // the controls, as one line at the bottom until gate 1
     window.__race = { L:L, at:function(){ return gi; }, bots:bots, auto:function(v){ auto = v; } };
     function onKey(e){ if (!E.PERF.show) return; if (e.code === 'KeyP') auto = auto ? 0 : 1; if (e.code === 'KeyO') auto = auto ? 0 : 2; }   // debug: P = drive around the sand, O = straight through it
     window.addEventListener('keydown', onKey);
     function finish(t, dnf){
-      done = true; tickers.splice(tickers.indexOf(tick), 1); window.removeEventListener('keydown', onKey);
+      done = true; tickers.splice(tickers.indexOf(tick), 1); window.removeEventListener('keydown', onKey); hint.hidden = true;
       if (auto){ var kk = E.keys(); kk.f = kk.l = kk.r = false; }
       E.setGuide(null); E.sfx('fanfare'); gates.forEach(function(m){ m.visible = false; });
       SCH.touch = false; SCH.slip = 0; SCH.vmaxK = 1; R.speed = 0;
@@ -725,6 +815,7 @@ function race(){
         gi++;
         E.setGuide(gi <= NG ? W(L[gi][0], L[gi][1]) : fw, gi <= NG ? 'ゲート ' + gi : 'ゴール');
       }
+      if (!hint.hidden && (gi > 1 || t > 10)) hint.hidden = true;
       var ahead = bots.filter(function(b){ return b.fin != null || b.x > pl.x; }).length;
       S.sub = (ahead + 1) + '位　ゲート ' + Math.min(gi - 1, NG) + '/' + NG + '　' + (t + pen).toFixed(1) + '秒'; $('sc-sub').textContent = S.sub;
       if (auto){                                           // debug autopilot (Shift+F, then P): steers around the sand like Mirai
@@ -738,7 +829,8 @@ function race(){
     }
     tickers.push(tick);
     (async function(){
-      $('sc-big').hidden = false; $('sc-bign').textContent = ''; $('sc-bigs').textContent = '輪をくぐってゴールへ！ 砂地はおそくなる';
+      hint.textContent = touchUI ? '右のボタンでアクセル・左をなぞってハンドル' : '↑でアクセル・←→でハンドル'; hint.hidden = false;
+      $('sc-big').hidden = false; $('sc-bign').textContent = ''; $('sc-bigs').textContent = '輪をくぐってゴールへ！';
       for (var c=3;c>0;c--){ $('sc-bigt').textContent = c; E.sfxTone(660, .12, 'triangle', .15); await sleep(700); }
       $('sc-bigt').textContent = 'スタート！'; E.sfxTone(990, .3, 'triangle', .18); go = true; SCH.slip = 2.6; E.setGuide(W(L[1][0], L[1][1]), 'ゲート 1');
       await sleep(700); $('sc-big').hidden = true;
@@ -747,7 +839,7 @@ function race(){
 }
 var RACE_L = [[-12, 44], [18, 53], [46, 35], [74, 53], [102, 35], [130, 42]];   // start, 4 gates, finish (base-local x, z) — checked clear of rocks
 var RACE_CAP = { H:.78, M:.62 };                       // rivals' top speed as a share of the rover's (tuned so an average run is 2nd, a clean run 1st)
-var RACE_PTS = [100, 70, 40], racePts = { ha:70, mi:40 };
+var RACE_PTS = [100, 70, 40];
 
 /* ================= extra sets: the private room and the canteen (built from simple shapes, next to the habitat's pocket world) ================= */
 function lin(hex, k){ return new T.Color(hex).convertSRGBToLinear().multiplyScalar(k || .62); }
@@ -965,17 +1057,17 @@ function showEarth(c, yaw){
 
 /* ================= the school day ================= */
 var Q = {
-  site: { title:'どこに降りる？', q:'着陸船を降ろす場所をえらぼう。', opts:['山の斜面', '平らな場所', '大きな岩があるところ'], ans:1,
-    why:['斜面に降りると、着陸船がかたむいて倒れたり、すべり落ちたりします。', '岩や斜面のない平らな場所なら、着陸船がまっすぐ安定して立てます。', '大きな岩に脚が乗り上げると、着陸船がかたむいたり、こわれたりします。'],
-    tip:'探査車パーサヴィアランスは、降下中に地面を撮影し、危ない場所を自動でよけて着陸しました（NASA）。' },
-  storm: { title:'砂嵐が来た！ いつ降りる？', q:'着陸の直前に、大きな砂嵐が発生。どうする？', opts:['今すぐ降りる', '砂嵐が弱まってから降りる', 'エンジンを止めて一気に降りる'], ans:1,
-    why:['砂で地面が見えず、岩や斜面をよけられません。無理に降りるのは危険です。', '砂嵐が弱まるまで上空で待つのが安全です。', 'エンジンを止めると減速できず、地面に激突します。火星は空気がうすく、パラシュートだけでは止まれません。'],
-    tip:'火星では、星全体をおおうほど大きな砂嵐が起きることもあります。' },
+  site: { title:'どこに降りる？', q:'', opts:['山の斜面', '平らな場所', '大きな岩があるところ'], ans:1,
+    why:['斜面だと、着陸船がかたむいて倒れたり、すべり落ちたりします。', '平らな場所なら、着陸船がまっすぐ安定して立てます。', '大きな岩に脚が乗ると、かたむいたり、こわれたりします。'],
+    tip:'探査車パーサヴィアランスは、降下中に自動で危険をよけて着陸しました（NASA）。' },
+  storm: { title:'砂嵐が来た！ いつ降りる？', q:'', opts:['今すぐ降りる', '砂嵐が弱まってから降りる', 'エンジンを止めて一気に降りる'], ans:1,
+    why:['砂で地面が見えず、岩や斜面をよけられません。', '砂嵐が弱まるまで上空で待つのが安全です。', 'エンジンを止めると激突します。空気がうすく、パラシュートだけでは止まれません。'],
+    tip:'火星では、星全体をおおう砂嵐が起きることもあります。' },
   grow: { title:'どうして早く育つの？', q:'火星の畑の野菜が、早く育つ理由は？', opts:['品種改良をしたから', '土に錆（さび）があるから', '空気が乾燥しているから'], ans:0,
-    why:['正解。せまい場所で早く収穫できるように、小さく育つ品種をえらび、改良しています。光はLED、水と養分は機械で調整します。',
-         '火星の砂が赤いのは錆（酸化鉄）のせいですが、植物の栄養にはなりません。火星の砂には有害な成分もあり、そのままでは使えません。',
-         '乾燥は植物の大敵です。畑では、水と湿度を機械でていねいに管理しています。'],
-    tip:'国際宇宙ステーション（ISS）でも、小さく育つミニトマトやレタスがえらばれています。レタスの収穫までは約1か月かかります（NASA）。' }
+    why:[['せまい場所で早く収穫できるよう、小さく育つ品種をえらび、改良しています。', '光はLED、水と養分は機械で調整します。'],
+         '砂が赤いのは錆（酸化鉄）のせい。栄養にならず、有害な成分もあります。',
+         '乾燥は植物の大敵。畑では水と湿度を機械で管理しています。'],
+    tip:['ISSでも、小さく育つミニトマトやレタスがえらばれています（NASA）。', 'レタスの収穫までは約1か月かかります（NASA）。'] }
 };
 
 async function createChar(){
@@ -1011,20 +1103,19 @@ async function intro(){
   buildPeople();
   S.period = '朝の会'; S.sub = ''; hud();
   await talk([
-    ['T', 'おはよう、{n}さん！ 担任のホシノです。火星行きの宇宙船へようこそ。'],
-    ['T', '今日は「火星中学校」への修学旅行。1日かけて、火星のくらしを体験しながら学ぶぞ。'],
-    ['T', '火星の1日は24時間39分。地球とほとんど同じだから、時間割も6時間目まである。'],
+    ['T', 'おはよう、{n}さん！ 今日は「火星中学校」への修学旅行だ。'],
+    ['T', '火星の1日は24時間39分。地球とほぼ同じだから、6時間目まであるぞ。'],
     ['H', 'オレはハヤト！ 体育なら負けないぜ。'],
     ['M', 'ミライです。火星のこと、たくさん調べてきました。'],
-    ['T', '授業ごとに点数がつく。3人で競争だ。点数が高いと、あとでいいことがあるかも？'],
-    ['T', 'それでは出発！ まずは1時間目、火星への着陸だ。']
+    ['T', '授業ごとに点数がつく。3人で競争だ！']
   ]);
 }
 async function p1(){
+  lesson('p1');
   await bell('1時間目', '着陸', '火星の上空');
   var got = 0;
   E.setPhase('site'); E.siteMarks(true);
-  await say('T', '着陸船をどこに降ろすか、{n}さんが決めてくれ。下に見える A・B・C の3か所だ。');
+  await say('T', '{n}さん、下の A・B・C のどこに降りるか決めてくれ。');
   if (await quiz(Q.site)){ got += 100; add(100); }
   E.siteMarks(false);
   var storm = new Promise(function(r){ SCH.onStorm = r; }), landed = new Promise(function(r){ SCH.onLanded = r; });
@@ -1036,86 +1127,81 @@ async function p1(){
   await landed;
   await cut(function(){ scene('arrive'); S.sub = '着陸'; hud(); });
   await talk([
-    ['T', '着陸成功！ ここが火星だ。空がうすいオレンジ色だろう？ 細かい砂が空にまっているからなんだ。'],
+    ['T', '着陸成功！ 空がうすいオレンジ色なのは、細かい砂がまっているからだ。'],
     ['H', 'うわ、体が軽い！'],
-    ['T', '火星の基地には、先に来てくらしている隊員たちがいる。今日は隊員のみなさんが先生だ。火星では、外に出るときは必ず2人以上で行動するのがきまりだぞ。']
+    ['T', '火星では、外に出るときは必ず2人以上で行動するのがきまりだぞ。']
   ]);
   await rank('p1', '1時間目', got, 200);
 }
 async function p2(){
+  lesson('p2');
   await cut(function(){ scene('ground'); });
   await bell('2時間目', '体育', 'グラウンド');
-  await talk([
-    ['G', '体育担当のリクだ。まずはハードル走。最初は「地球と同じ重力だったら」をシミュレーターでためすぞ。'],
-    ['G', '青いゾーンに入ったら、画面をタップしてジャンプ！']
-  ]);
+  await say('G', '地球と火星で、ジャンプをくらべるぞ！');
   var a = await hurdleRun('地球の重力（シミュレーション）', 9.81, 4, 9, .3, [1.1, 3.6]);
-  await say('G', '次は本物の火星の重力だ。ジャンプがどう変わるか、体で感じてくれ。');
+  await say('G', '次は本物の火星の重力だ！');
   var b = await hurdleRun('火星の重力（地球の約38％）', 3.73, 5, 18, .3, [1.2, 11]);
   var hp = Math.round((a.cleared + b.cleared)/(a.n + b.n)*100); add(hp);
   await cut(function(){ scene('ground'); });
   await info('ハードル走のけっか　+' + hp + '点', '地球：' + a.cleared + ' / ' + a.n + ' 台　　火星：' + b.cleared + ' / ' + b.n + ' 台<br>ジャンプの高さ　地球 <b>' + a.top.toFixed(2) + ' m</b> → 火星 <b>' + b.top.toFixed(2) + ' m</b>',
-    '火星の重力は地球の約38％。同じ力でとぶと、高さも、空中にいる時間も約2.6倍になります。');
+    '火星の重力は地球の約38％。同じ力でとぶと、高さも空中にいる時間も約2.6倍。');
   await cut(function(){ scene('gym'); S.sub = '体育（トレーニングルーム）'; hud(); });
-  await talk([
-    ['G', '基地に入ったら宇宙服をぬぐ。中は空気があって、気温は21℃くらいだ。'],
-    ['G', '重力が弱いと楽だけど、筋肉と骨がどんどん弱くなる。だから毎日トレーニングだ。リズムに合わせてスクワット！']
-  ]);
-  var r = await rhythm({ title:'トレーニング：リズムに合わせてスクワット', bpm:96, beats:mkBeats(5, 18), color:'#d9534f', glyph:'●', genre:'rock',
-    onHit:function(){ pose.squat = 1; allHop(); } });
+  await say('G', '重力が弱いと、筋肉と骨が弱くなる。だから毎日トレーニングだ！');
+  var bt = mkBeats(5, 18);
+  var r = await rhythm({ title:'トレーニング：スクワット', bpm:96, beats:bt, color:'#d9534f', glyph:'●', genre:'rock',
+    rivals:rivalsFor('p2', 'train', bt.length), onRival:function(k, v){ if (v) NPC[k].squat = 1; },
+    onHit:function(){ pose.squat = 1; cheer(); } });
   var tp = Math.round(r*100); add(tp);
-  await info('トレーニングのけっか　+' + tp + '点', '宇宙飛行士は、筋肉と骨を守るために運動がかかせません。', 'ISSの宇宙飛行士は、毎日約2時間の運動をしています（NASA）。');
+  await info('トレーニングのけっか　+' + tp + '点', '', '国際宇宙ステーション（ISS）では、毎日約2時間の運動をします（NASA）。');
   await rank('p2', '2時間目', hp + tp, 200);
 }
 async function p3(){
+  lesson('p3');
   await cut(function(){ scene('solar'); });
   await bell('3時間目', '技術', '発電所');
   await talk([
-    ['G', '技術担当のソラです。基地の電気は、このソーラーパネルで作っています。'],
-    ['G', 'でも火星にとどく太陽の光は、地球の約43％。大事に使わないといけません。'],
-    ['G', 'パネルとアンテナをケーブルでつないで、地球にメッセージを送りましょう。']
+    ['G', '基地の電気は、このソーラーパネルで作っています。'],
+    ['G', 'でも火星にとどく太陽の光は、地球の約43％。大事に使います。']
   ]);
   var w = await wires();
   var wp = w.helped ? 30 : Math.round(clamp(100 - Math.max(0, w.sec - 20)*1.5, 40, 100)); add(wp);
   E.M_SOLAR_FIELD.color.setHex(0x1a3470); E.M_SOLAR_FIELD.roughness = .25; E.M_SOLAR_FIELD.metalness = .7;
   var c = E.COMMS_POS, c2 = W(-18, -18); setShot({ x:c.x, y:E.groundAt(c.x, c.z)+2.4, z:c.z, yaw:Math.atan2(c2.x - c.x, c2.z - c.z), pitch:.22, dist:12, ease:true });
-  await say('G', 'つながった！（' + Math.round(w.sec) + '秒　+' + wp + '点）アンテナに電気がとどきました。');
-  S.msg = await pick('地球にメッセージを送ろう', '火星に来てみた感想を、家族に送ります。', MSGS.map(function(m){ return { name:m }; }));
+  await say('G', 'つながった！（' + Math.round(w.sec) + '秒　+' + wp + '点）');
+  S.msg = await pick('地球にメッセージを送ろう', '家族に、火星の感想を送ります。', MSGS.map(function(m){ return { name:m }; }));
   E.sfx('door'); add(50);
   await talk([
-    ['G', '送信しました！ 電波は光の速さで進むけれど、地球はとても遠い。とどくまで片道3〜22分かかります。'],
-    ['T', '返事が来るのは、早くてもしばらくあとだな。給食のころには、とどくかもしれないぞ。']
+    ['G', '送信しました！ 光の速さの電波でも、地球まで片道3〜22分かかります。'],
+    ['T', '返事は、給食のころにとどくかもしれないな。']
   ]);
   await rank('p3', '3時間目', wp + 50, 150);
 }
 async function p4(){
+  lesson('p4');
   await cut(function(){ scene('farm'); E.lettuce.forEach(function(m){ m.visible = false; }); E.tomato.forEach(function(m){ m.visible = true; m.scale.setScalar(1); });
     E.lettuce.slice(7).forEach(function(m){ m.visible = true; m.scale.setScalar(1); }); });
   await bell('4時間目', '家庭科', '地下の畑');
   await talk([
-    ['G', '農場担当のミドリです。ここは地下の畑。外は寒くて空気もうすいから、野菜は基地の中で育てます。'],
-    ['G', '種も水も、地球から運んだ大切なもの。ムダにしないよう、ピッタリの量をはかってね。']
+    ['G', '外は寒くて空気もうすいので、野菜は基地の中で育てます。'],
+    ['G', '種も水も、地球から運んだ大切なものです。']
   ]);
   var gr = await gauge([{ name:'レタスの種をまく', target:62, band:5, sec:2.4 }, { name:'水をあげる', target:48, band:4, sec:1.9 }, { name:'養分をまぜる', target:74, band:4, sec:1.5 }]);
   var gp = Math.round(gr*100); add(gp);
   E.lettuce.slice(0, 7).forEach(function(m){ m.visible = true; m.scale.setScalar(.14); }); allHop();
-  await say('G', '上手にまけました！（+' + gp + '点）芽が出るまで数日、食べられるまでは約1か月かかります。');
+  await say('G', '上手にまけました！（+' + gp + '点）芽が出るまで数日、食べられるのは約1か月後です。');
   await cut(function(){ scene('life'); S.sub = '家庭科（生活棟）'; hud(); });
-  await talk([
-    ['G', '生活担当のユイです。次は火星の「衣・食・住」。点数が高い人ほど、えらべるものがふえますよ。']
-  ]);
-  S.cloth = await pick('衣：基地で着る服', 'ISSには洗濯機がありません。服は何日か着たら、新しいものに取りかえます。', CLOTHES, function(i){ S.cloth = i; mySuit(false); });
+  await say('G', '次は火星の「衣・食・住」です。');
+  S.cloth = await pick('衣：基地で着る服', 'ISSには洗濯機がなく、服は何日か着たら取りかえます。', CLOTHES, function(i){ S.cloth = i; mySuit(false); });
   mySuit(false);
-  S.food = await pick('食：今日の給食', '宇宙食は、レトルトやフリーズドライが中心。軽くて長持ちするからです。', FOODS);
-  await say('G', 'さいごは「住」。{n}さんの個室に案内しますね。');
+  S.food = await pick('食：今日の給食', '宇宙食はレトルトやフリーズドライが中心。軽くて長持ちします。', FOODS);
   await cut(function(){ sceneRoom(); S.sub = '家庭科（個室）'; hud(); });
   await talk([
-    ['G', 'ここが個室です。ISSの個室は、電話ボックスくらいの広さしかありません（NASA）。火星の基地も、とてもせまいんです。'],
-    ['G', '地球から持ってこられる荷物は少しだけ。家具は4こまで置けます。何を置くか、考えてみてください。']
+    ['G', 'さいごは「住」。ISSの個室は、電話ボックスくらいしかありません（NASA）。'],
+    ['G', '持ってこられる荷物は少しだけ。家具は4こまでです。']
   ]);
   await roomGame();
   add(50);
-  await say('G', S.items.indexOf('window') >= 0 ? 'いい部屋ですね！ その窓、夕方になったら外を見てみてください。地球が見えますよ。' : 'いい部屋ですね！ せまいからこそ、何を置くかが大事なんです。');
+  await say('G', S.items.indexOf('window') >= 0 ? 'いい部屋ですね！ その窓から、夕方には地球が見えますよ。' : 'いい部屋ですね！');
   await rank('p4', '4時間目', gp + 50, 150);
 }
 async function lunch(){
@@ -1126,23 +1212,24 @@ async function lunch(){
   await talk([
     ['T', 'いただきます！ {n}さんの給食は「' + f.name + '」だな。'],
     ['H', 'オレは「' + FOODS[menu.H].name + '」！ ミライは「' + FOODS[menu.M].name + '」か。'],
-    ['G', f.note + ' 水はとても貴重なので、使った水もきれいにして、くり返し使います。'],
+    ['G', '水はとても貴重。使った水もきれいにして、くり返し使います。'],
     ['M', 'ISSでは、水の約98％をリサイクルしているそうです（NASA・2023年）。'],
     ['T', 'おっ、地球から返事がとどいたぞ！'],
-    ['T', '「メッセージありがとう。' + (S.msg === 1 ? 'ジャンプ、見てみたいな。' : S.msg === 2 ? 'あたたかくしてね。' : 'オレンジ色の空、すてきだね。') + '気をつけて帰ってきてね。家族より」']
+    ['T', '「メッセージありがとう。' + (S.msg === 1 ? 'ジャンプ、見てみたいな。' : S.msg === 2 ? 'あたたかくしてね。' : 'オレンジ色の空、すてきだね。') + '気をつけてね。家族より」']
   ]);
   E.sfx('ok'); pose.eat = false; E.player.setMouth(false);
 }
 async function p5(){
+  lesson('p5');
   await cut(function(){ scene('music'); });
   await bell('5時間目', '総合', '音楽室');
-  await talk([
-    ['T', '火星のくらしは、じつは自由な時間が多いんだ。外は危険だから、ほとんどの時間を基地の中ですごす。'],
-    ['T', 'だから「楽しみを見つけること」も大事な仕事。まずは好きな音楽でおどろう！']
-  ]);
-  var keys = Object.keys(TUNES), gi = await pick('CDをえらぼう', '好きなジャンルをえらんでね。', keys.map(function(k){ return { name:TUNES[k].name }; }));
-  var r = await rhythm({ title:'ダンス：' + TUNES[keys[gi]].name, bpm:112, beats:mkBeats(8, 30), color:'#b07fd9', glyph:'♪', genre:keys[gi],
-    onHit:function(i){ pose.hop = 1; pose.spin = i%4 === 3 ? 1 : 0; allHop(); } });
+  await say('T', '外は危険だから、ほとんど基地の中ですごす。楽しみを見つけるのも大事な仕事だ。');
+  var keys = Object.keys(TUNES), gi = await pick('CDをえらぼう', '', keys.map(function(k){ return { name:TUNES[k].name }; }));
+  var bt = mkBeats(8, 30);
+  var r = await rhythm({ title:'ダンス：' + TUNES[keys[gi]].name, bpm:112, beats:bt, color:'#b07fd9', glyph:'♪', genre:keys[gi],
+    rivals:rivalsFor('p5', 'dance', bt.length),
+    onRival:function(k, v, i){ var c = NPC[k]; if (!v) return; c.hop = 1; if (i%4 === 3) c.spin = 1; else if (c.spin){ c.spin = 0; c.root.rotation.y = c.face; } },
+    onHit:function(i){ pose.hop = 1; pose.spin = i%4 === 3 ? 1 : 0; cheer(); } });
   var dp = Math.round(r*100); add(dp);
   await say('H', (dp >= 50 ? 'いいリズム！' : 'ドンマイ！') + '（+' + dp + '点）次はオレの得意なやつだ！');
   await cut(function(){
@@ -1153,15 +1240,13 @@ async function p5(){
     S.sub = '総合（ローバーレース）'; hud();
   });
   await talk([
-    ['T', 'ローバーは人が乗って走る火星の車だ。最高でも時速10kmくらい。自転車をゆっくりこぐ速さだな。'],
-    ['T', '火星は重力が弱いから、タイヤが地面をつかみにくい。ブレーキもハンドルも、ききがおそいぞ。'],
-    ['T', 'コースには砂地がある。まっすぐ行けば近道だが、砂の上はスピードが落ちる。よけるか、つっこむか、自分で決めよう。'],
-    ['T', '右のボタンでアクセル。画面の左側を左右になぞるとハンドルだ（キーボードなら矢印キー）。3人で競争だ！']
+    ['T', 'ローバーは最高でも時速10km。重力が弱く、タイヤがすべりやすいぞ。'],
+    ['T', '砂地は近道だけど、おそくなる。よけるか、つっこむかはきみしだい！']
   ]);
   var rc = await race();
   var rp = RACE_PTS[rc.place - 1]; add(rp);
   var oH = rc.order.findIndex(function(o){ return o.k === 'H'; }), oM = rc.order.findIndex(function(o){ return o.k === 'M'; });
-  racePts = { ha:RACE_PTS[oH], mi:RACE_PTS[oM] };
+  plan('p5').ha.race = RACE_PTS[oH]; plan('p5').mi.race = RACE_PTS[oM];
   await cut(function(){
     outdoor(.62); var f = RACE_L[RACE_L.length-1], a = Math.atan2(W(1, 0).x - W(0, 0).x, W(1, 0).z - W(0, 0).z), c = W(f[0] + 21, f[1]);
     setP(W(f[0] + 22, f[1]), a); put(NPC.T, W(f[0] + 20.5, f[1] + 3.2), a); put(NPC.H, W(f[0] + 21, f[1] - 2.8), a); put(NPC.M, W(f[0] + 20, f[1] - 5), a);
@@ -1171,22 +1256,24 @@ async function p5(){
   await info('ローバーレースのけっか　' + rc.place + '位　+' + rp + '点',
     rc.order.map(function(o, i){ return (i+1) + '位 ' + (o.k === 'P' ? '<b>' + nm[o.k] + '</b>' : nm[o.k]) + '：' + (o.t > 900 ? 'ゴールできず' : o.t.toFixed(1) + '秒'); }).join('　') +
     (rc.pen ? '<br>（ゲートを外したぶん +' + rc.pen + '秒）' : ''),
-    '本物の火星探査車スピリットは、2009年に砂にはまって動けなくなりました。火星では、近道に見える砂地がいちばんの危険です（NASA/JPL）。');
+    '探査車スピリットは2009年、砂にはまり動けなくなりました（NASA/JPL）。');
   await rank('p5', '5時間目', dp + rp, 200);
 }
 async function p6(){
+  lesson('p6');
   await cut(function(){ raceCleanup(); scene('farm'); S.sub = '家庭科（収穫）'; hud();
     E.tomato.concat(E.lettuce.slice(7)).forEach(function(m){ m.visible = true; m.scale.setScalar(1); }); });
   await bell('6時間目', '家庭科', '地下の畑');
   await talk([
-    ['G', 'おかえりなさい。今日のさいごは収穫です。'],
+    ['G', 'おかえりなさい。さいごは収穫です。'],
     ['H', 'えっ、朝まいた種がもう育ったの！？'],
-    ['G', 'いいえ。朝の種は、まだ芽も出ていません（手前の小さな苗です）。収穫するのは、わたしたちが前から育ててきた野菜ですよ。'],
-    ['G', 'リズムよく、ていねいに収穫しましょう。']
+    ['G', 'いいえ。朝の種は、まだ芽も出ていません（手前の小さな苗です）。'],
+    ['G', '収穫するのは、前から育ててきた野菜ですよ。']
   ]);
   setShot({ x:E.INT.x, y:E.INT.y - 5 + .8, z:E.INT.z - 14.6, yaw:0, pitch:.62, dist:11.5, ease:true });
-  var crops = E.tomato.concat(E.lettuce.slice(7));
-  var r = await rhythm({ title:'収穫：リズムよくとろう', bpm:100, beats:mkBeats(5, crops.length), color:'#4caf6a', glyph:'★', genre:'pop',
+  var crops = E.tomato.concat(E.lettuce.slice(7)), bt = mkBeats(5, crops.length);
+  var r = await rhythm({ title:'収穫：リズムよくとろう', bpm:100, beats:bt, color:'#4caf6a', glyph:'★', genre:'pop',
+    rivals:rivalsFor('p6', 'harvest', bt.length), onRival:function(k, v){ if (v) NPC[k].pick = 1; },
     onHit:function(i){ var m = crops[i % crops.length]; if (m){ m.visible = false; var wp = new T.Vector3(); m.getWorldPosition(wp); E.puff(wp.x, wp.y, wp.z, .3, .8); } pose.hop = 1; pose.spin = 0; } });
   var hp = Math.round(r*100); add(hp);
   await say('G', 'たくさんとれました！（+' + hp + '点）ではさいごに問題です。');
@@ -1197,12 +1284,10 @@ async function closing(){
   await cut(function(){ scene('sunset'); });
   await bell('帰りの会', '', '基地の前');
   await talk([
-    ['T', '見てごらん。火星の夕焼けは青いんだ。昼の空はオレンジ色なのに、ふしぎだろう？'],
+    ['T', '火星の夕焼けは青いんだ。昼はオレンジ色なのに、ふしぎだろう？'],
     ['M', '空の細かい砂が、青い光だけを太陽のまわりに集めるから…ですよね。'],
-    ['T', 'その通り。それから、右上に明るい星が見えるかな？ あれが地球だ。となりの小さな点は月。あんなに遠くから来たんだな。']
-  ].concat(S.items.indexOf('window') >= 0 ? [['T', '{n}さんの部屋の窓からも、あの光が見えるぞ。']] : []).concat([
-    ['T', 'さあ、今日1日の結果発表だ！']
-  ]));
+    ['T', 'その通り。右上の明るい星が地球だ。となりの小さな点は月だよ。']
+  ].concat(S.items.indexOf('window') >= 0 ? [['T', '{n}さんの部屋の窓からも、あの光が見えるぞ。']] : []));
   var rows = [ { k:'P', n:S.name, t:S.pts.me, me:true }, { k:'H', n:'ハヤト', t:S.pts.ha }, { k:'M', n:'ミライ', t:S.pts.mi } ].sort(function(a, b){ return b.t - a.t; });
   var my = rows.findIndex(function(r){ return r.me; }) + 1;
   E.sfx('fanfare'); allHop(); pose.hop = 1;
@@ -1215,9 +1300,8 @@ async function closing(){
     '<br>服：' + CLOTHES[S.cloth].name + '　給食：' + FOODS[S.food].name + '　個室：' + (S.items.length ? FURN.filter(function(f){ return S.items.indexOf(f.id) >= 0; }).map(function(f){ return f.name; }).join('・') : 'なし') + '</div>' + nextBtn());
   await waitOk();
   await talk([
-    ['T', '{n}さん、今日はどうだった？ 火星のくらしは、地球とちがうことがたくさんあったな。'],
-    ['T', '体は軽いけど筋肉は弱る。電気も水も食べ物も、自分たちで作って大事に使う。そして、仲間と楽しむ時間も大切だ。'],
-    ['T', 'いつか本当に火星へ行く日が来たら、今日のことを思い出してくれ。それでは、これで火星修学旅行を終わります。気をつけて帰ろう！']
+    ['T', '体は軽いけど筋肉は弱る。電気も水も食べ物も、自分たちで作って大事に使う。'],
+    ['T', '仲間と楽しむ時間も大切だ。いつか火星へ行く日が来たら、今日を思い出してくれ。']
   ]);
   panel('<h2>おしまい</h2><div class="sc-body">ようこそ、火星中学校へ。<br>また遊びに来てね！</div><div class="sc-end2"><button type="button" class="sc-go" id="sc-again">もう一度あそぶ</button></div>');
   $('sc-again').addEventListener('click', function(){ location.reload(); });
@@ -1235,7 +1319,8 @@ async function start(skipTo){
   await intro();
   for (var j=0;j<PERIODS.length;j++) await PERIODS[j]();
 }
-window.__sch = { E:E, S:S, W:W, RACE_L:RACE_L, sceneRoom:sceneRoom, roomGame:roomGame, sceneCafe:sceneCafe, scene:scene, pose:pose, room:function(){ return ROOM; } };
+window.__sch = { E:E, S:S, W:W, RACE_L:RACE_L, sceneRoom:sceneRoom, roomGame:roomGame, sceneCafe:sceneCafe, scene:scene, pose:pose, room:function(){ return ROOM; },
+  PLAN:PLAN, NPC:NPC, autoRhythm:0 };
 window.MARS_SCHOOL_START = function(){ start(0).catch(function(e){ console.error(e); }); };
 /* debug: on the title screen, Shift+2 … Shift+8 jumps to that part */
 window.addEventListener('keydown', function(e){ var d = /^Digit([2-8])$/.exec(e.code); if (d && e.shiftKey && !SCH.on && !$('titlecard').hidden) start(+d[1]).catch(function(x){ console.error(x); }); });
