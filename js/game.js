@@ -1159,7 +1159,7 @@ function updateWeather(dt){
   dMat.color.setRGB(.5*lit, .27*lit, .14*lit);
 
   // dust devils: clear, warm afternoons only
-  var canSpawn = wx.storm < .15 && tDay > .38 && tDay < .68 && wx.mode !== 'storm';
+  var canSpawn = !IND.on && wx.storm < .15 && tDay > .38 && tDay < .68 && wx.mode !== 'storm';   // never indoors: a dust devil must not show beyond a room's walls
   wx.devils = 0;
   for (i=0;i<devils.length;i++){
     var d = devils[i];
@@ -1173,6 +1173,7 @@ function updateWeather(dt){
       continue;
     }
     d.life -= dt;
+    if (IND.on) d.life = 0;                                  // one that was alive when we came inside ends here
     if (d.life <= 0){ d.g.visible = false; continue; }
     wx.devils++;
     d.g.position.x += (wx.wvx*.7 + Math.sin(wx.clk*.3+i*2)*1.5)*dt; d.g.position.z += (wx.wvz*.7 + Math.cos(wx.clk*.23+i)*1.5)*dt;
