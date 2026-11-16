@@ -551,7 +551,7 @@ function rivalBoard(runs, n){
   function show(){
     order.forEach(function(k, i){ rows[k].style.transform = 'translateY(' + (50 + i*46) + 'px)'; rows[k].querySelector('.sc-rvno').textContent = (i + 1) + '位'; });
     var me = order.indexOf('P') + 1, nw = $('sc-rvnow');
-    if (nw && nw.dataset.p !== String(me)){ nw.textContent = 'いま ' + me + '位！'; nw.dataset.p = me; nw.classList.remove('pop'); void nw.offsetWidth; nw.classList.add('pop'); }
+    if (nw && nw.dataset.p !== String(me)){ nw.textContent = 'このゲーム ' + me + '位！'; nw.dataset.p = me; nw.classList.remove('pop'); void nw.offsetWidth; nw.classList.add('pop'); }
     keys.forEach(function(k){ rows[k].querySelector('i').style.width = (sum[k]/n*100) + '%'; rows[k].querySelector('.sc-rvs').textContent = Math.round(sum[k]/n*100); });
   }
   function flash(){ rows.P.classList.remove('up'); void rows.P.offsetWidth; rows.P.classList.add('up'); }
