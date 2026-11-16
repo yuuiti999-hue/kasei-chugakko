@@ -2510,7 +2510,7 @@ if (window.MARS_SCHOOL) window.MARS_SCHOOL({
   astro:astro, body:body, helmet:helmet, backpack:back, player:player, makeChara:makeChara, portrait:portrait, thumb:thumb, PROPS:PROPS, EMBLEMS:EMBLEMS, armL:armL, armR:armR, legL:legL, legR:legR, M_SUIT:M_SUIT, M_GREY:M_GREY, part:part,
   lettuce:lettuce, tomato:tomato, dish:dish, DISH_ROT0:DISH_ROT0, M_SOLAR_FIELD:M_SOLAR_FIELD, rover:rover, lander:lander, seedCase:seedCase,
   b2w:baseToWorld, groundAt:groundAt, solids:solids, bigRocks:bigRocks, puff:puff, sfx:sfx, sfxTone:sfxTone, sfxNoise:sfxNoise, setGuide:setGuide, setWeatherMode:setWeatherMode,
-  setIndoor:setIndoor, enterRover:enterRover, exitRover:exitRover, setView:setView, siteMarks:siteMarks, bgmPlay:bgmPlay, bgmInit:bgmInit, stepOut:stepOut,
+  setIndoor:setIndoor, enterRover:enterRover, exitRover:exitRover, setView:setView, siteMarks:siteMarks, bgmPlay:bgmPlay, bgmInit:bgmInit, bgmLoad:bgmLoad, stepOut:stepOut,
   sunDir:sunDir, interior:interior, propIn:propIn,
   setTime:function(v){ tDay = v; }, setGravity:function(g){ gravity = g; }, jump:function(){ wantJump = true; },
   setPhase:function(ph){ G.phase = ph; G.t = 0; }, restart:restartGame, freeRoam:skipToFree

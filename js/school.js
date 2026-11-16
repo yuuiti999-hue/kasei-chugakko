@@ -408,22 +408,24 @@ var LOOPS = {
     chords:[[57,60,64],[53,57,60],[60,64,67],[55,59,62]], bass:[33,29,36,31],
     arp:[0,1,2,1,0,1,2,3] }
 };
-var MOOD = { cur:'talk', out:null, timer:0, next:0, step:0 };
+var MOOD = { cur:'talk', out:null, syn:null, timer:0, next:0, step:0, srcs:[], loopT:0 };
+/* recorded tracks for the moods (quiz / sport / game / room) arrive late, in js/bgm2.js, so the title screen is not kept waiting */
+if (window.MARS_BGM && !window.MARS_BGM.quiz){ var b2 = document.createElement('script'); b2.src = 'js/bgm2.js'; b2.async = true; document.head.appendChild(b2); }
 function moodNote(freq, dur, type, vol, at){
   var ctx = E.BGM.ctx, o = ctx.createOscillator(), g = ctx.createGain();
   o.type = type; o.frequency.setValueAtTime(freq, at);
   g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(vol, at + .012); g.gain.exponentialRampToValueAtTime(.001, at + dur);
-  o.connect(g); g.connect(MOOD.out); o.start(at); o.stop(at + dur + .05);
+  o.connect(g); g.connect(MOOD.syn); o.start(at); o.stop(at + dur + .05);
 }
 function moodHit(dur, freq, vol, at){
   if (!E.SFX.noise) return;
   var ctx = E.BGM.ctx, s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
   s.buffer = E.SFX.noise; f.type = 'highpass'; f.frequency.value = freq;
   g.gain.setValueAtTime(vol, at); g.gain.exponentialRampToValueAtTime(.001, at + dur);
-  s.connect(f); f.connect(g); g.connect(MOOD.out); s.start(at, Math.random()); s.stop(at + dur + .02);
+  s.connect(f); f.connect(g); g.connect(MOOD.syn); s.start(at, Math.random()); s.stop(at + dur + .02);
 }
-function moodPump(){
-  var L = LOOPS[MOOD.cur], ctx = E.BGM.ctx; if (!L || !ctx) return;
+function moodPump(){                                        // fallback only: a synthesised loop while the recorded track is not available
+  var L = LOOPS[MOOD.cur === 'quiz' ? 'quiz' : 'game'], ctx = E.BGM.ctx; if (!L || !ctx) return;
   var sp = 60/L.bpm/2, now = ctx.currentTime;                 // one step = an eighth note
   if (MOOD.next < now) MOOD.next = now + .06;                 // first run, or the tab was in the background
   while (MOOD.next < now + .7){                              // generous look-ahead: a 3D frame hitch must not leave a hole in the music
@@ -431,25 +433,46 @@ function moodPump(){
     if (d != null) moodNote(hz((d === 3 ? ch[0] + 12 : ch[d]) + 12), sp*.9, L.lead, L.lv, at);
     if (i%4 === 0) moodNote(hz(L.bass[bar]), sp*1.8, 'sine', L.bv, at);
     else if (L.kick && i%2 === 0) moodNote(hz(L.bass[bar] + 12), sp*.8, 'sine', L.bv*.6, at);
-    if (L.kick && i%2 === 0){ var ctx2 = ctx, o = ctx2.createOscillator(), g = ctx2.createGain(); o.frequency.setValueAtTime(130, at); o.frequency.exponentialRampToValueAtTime(45, at + .12);
-      g.gain.setValueAtTime(L.kick, at); g.gain.exponentialRampToValueAtTime(.001, at + .14); o.connect(g); g.connect(MOOD.out); o.start(at); o.stop(at + .16); }
+    if (L.kick && i%2 === 0){ var o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.setValueAtTime(130, at); o.frequency.exponentialRampToValueAtTime(45, at + .12);
+      g.gain.setValueAtTime(L.kick, at); g.gain.exponentialRampToValueAtTime(.001, at + .14); o.connect(g); g.connect(MOOD.syn); o.start(at); o.stop(at + .16); }
     moodHit(i%2 ? .05 : .025, 6500, i%2 ? L.hat : L.hat*.5, at);
     MOOD.next += sp;
   }
 }
-function mood(name){                                        // 'talk' | 'quiz' | 'game'
+function moodStop(fade){                                    // stop whatever mood music is sounding (recorded or synthesised)
+  var ctx = E.BGM.ctx, t = ctx.currentTime;
+  MOOD.srcs.forEach(function(o){ try { o.g.gain.cancelScheduledValues(t); o.g.gain.setValueAtTime(o.g.gain.value, t); o.g.gain.linearRampToValueAtTime(0, t + fade); o.s.stop(t + fade + .05); } catch(_){} });
+  MOOD.srcs = []; clearTimeout(MOOD.loopT); clearInterval(MOOD.timer); MOOD.timer = 0;
+}
+function moodQueue(name, buf, at, fadeIn){                  // play the track and chain the next copy with a cross-fade, so any cut loops cleanly
+  var XF = 2.2, ctx = E.BGM.ctx, s = ctx.createBufferSource(), g = ctx.createGain();
+  s.buffer = buf; s.connect(g); g.connect(MOOD.out);
+  g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(1, at + fadeIn);
+  var end = at + buf.duration;
+  g.gain.setValueAtTime(1, end - XF); g.gain.linearRampToValueAtTime(0, end);
+  s.start(at); s.stop(end + .05);
+  var o = { s:s, g:g }; MOOD.srcs.push(o);
+  s.onended = function(){ var k = MOOD.srcs.indexOf(o); if (k >= 0) MOOD.srcs.splice(k, 1); };
+  MOOD.loopT = setTimeout(function(){ if (MOOD.cur === name) moodQueue(name, buf, end - XF, XF); }, Math.max(0, (end - XF - ctx.currentTime - 1)*1000));
+}
+function mood(name){                                        // 'talk' | 'quiz' | 'sport' | 'game' | 'room'
   var B = E.BGM, prev = MOOD.cur; if (name === prev) return prev;
-  MOOD.cur = name; clearInterval(MOOD.timer); MOOD.timer = 0;
+  MOOD.cur = name;
   if (!B.ctx || !B.trk) return prev;                           // no sound yet: remember the mood only
   var t = B.ctx.currentTime;
-  if (!MOOD.out){ MOOD.out = B.ctx.createGain(); MOOD.out.gain.value = 0; MOOD.out.connect(B.gain); }
+  if (!MOOD.out){ MOOD.out = B.ctx.createGain(); MOOD.out.gain.value = .9; MOOD.out.connect(B.gain); MOOD.syn = B.ctx.createGain(); MOOD.syn.gain.value = 1.3; MOOD.syn.connect(B.gain); }
+  moodStop(name === 'talk' ? .5 : .25);
   B.trk.gain.setTargetAtTime(name === 'talk' ? 1 : 0, t, name === 'talk' ? .5 : .12);
-  MOOD.out.gain.cancelScheduledValues(t); MOOD.out.gain.setValueAtTime(MOOD.out.gain.value, t);
-  if (name === 'talk') MOOD.out.gain.setTargetAtTime(0, t, .08);
-  else { MOOD.out.gain.setTargetAtTime(1.3, t, .05); MOOD.step = 0; MOOD.next = 0; moodPump(); MOOD.timer = setInterval(moodPump, 90); }
+  if (name === 'talk') return prev;
+  if (window.MARS_BGM && window.MARS_BGM[name]){
+    E.bgmLoad(name, function(buf){
+      if (name !== 'quiz') delete B.buf[name];                 // decoded audio is big: keep only the quiz tune (used many times) in memory
+      if (MOOD.cur === name && !MOOD.srcs.length) moodQueue(name, buf, B.ctx.currentTime + .03, .25);
+    });
+  } else { MOOD.step = 0; MOOD.next = 0; moodPump(); MOOD.timer = setInterval(moodPump, 90); }
   return prev;
 }
-function play(pr){ var was = mood('game'); return pr.then(function(v){ mood(was === 'game' ? 'talk' : was); return v; }); }   // wrap a mini-game: game music while it runs
+function play(pr, m){ m = m || 'game'; var was = mood(m); return pr.then(function(v){ mood(was === m ? 'talk' : was); return v; }); }   // wrap a mini-game: its music while it runs
 function music(key, bpm, lead, beats){
   if (!E.BGM.ctx) return;
   var t = TUNES[key], spb = 60/bpm, bars = Math.ceil(beats/4), bass = [0, 0, 5, 7];
@@ -1230,9 +1253,9 @@ async function p2(){
   await cut(function(){ scene('ground'); });
   await bell('2時間目', '体育', 'グラウンド');
   await say('G', '地球と火星で、ジャンプをくらべるぞ！');
-  var a = await play(hurdleRun('地球の重力（シミュレーション）', 9.81, 4, 9, .3, [1.1, 3.6]));
+  var a = await play(hurdleRun('地球の重力（シミュレーション）', 9.81, 4, 9, .3, [1.1, 3.6]), 'sport');
   await say('G', '次は本物の火星の重力だ！');
-  var b = await play(hurdleRun('火星の重力（地球の約38％）', 3.73, 5, 18, .3, [1.2, 11]));
+  var b = await play(hurdleRun('火星の重力（地球の約38％）', 3.73, 5, 18, .3, [1.2, 11]), 'sport');
   var hp = Math.round((a.cleared + b.cleared)/(a.n + b.n)*100); add(hp);
   await cut(function(){ scene('ground'); });
   await info('ハードル走のけっか　+' + hp + '点', '地球：' + a.cleared + ' / ' + a.n + ' 台　　火星：' + b.cleared + ' / ' + b.n + ' 台<br>ジャンプの高さ　地球 <b>' + a.top.toFixed(2) + ' m</b> → 火星 <b>' + b.top.toFixed(2) + ' m</b>',
@@ -1255,7 +1278,7 @@ async function p3(){
     ['G', '基地の電気は、このソーラーパネルで作っています。'],
     ['G', 'でも火星にとどく太陽の光は、地球の約43％。大事に使います。']
   ]);
-  var w = await play(wires());
+  var w = await play(wires(), 'quiz');
   var wp = w.helped ? 30 : Math.round(clamp(100 - Math.max(0, w.sec - 20)*1.5, 40, 100)); add(wp);
   E.M_SOLAR_FIELD.color.setHex(0x1a3470); E.M_SOLAR_FIELD.roughness = .25; E.M_SOLAR_FIELD.metalness = .7;
   var c = E.COMMS_POS, c2 = W(-18, -18); setShot({ x:c.x, y:E.groundAt(c.x, c.z)+2.4, z:c.z, yaw:Math.atan2(c2.x - c.x, c2.z - c.z), pitch:.22, dist:12, ease:true });
@@ -1291,7 +1314,7 @@ async function p4(){
     ['G', 'さいごは「住」。ISSの個室は、電話ボックスくらいしかありません（NASA）。'],
     ['G', '持ってこられる荷物は少しだけ。家具は4こまでです。']
   ]);
-  await play(roomGame());
+  await play(roomGame(), 'room');
   add(50);
   await say('G', S.items.indexOf('window') >= 0 ? 'いい部屋ですね！ その窓から、夕方には地球が見えますよ。' : 'いい部屋ですね！');
   await rank('p4', '4時間目', gp + 50, 150);
@@ -1335,7 +1358,7 @@ async function p5(){
     ['T', 'ローバーは最高でも時速10km。重力が弱く、タイヤがすべりやすいぞ。'],
     ['T', '砂地は近道だけど、おそくなる。よけるか、つっこむかはきみしだい！']
   ]);
-  var rc = await play(race());
+  var rc = await play(race(), 'sport');
   var rp = RACE_PTS[rc.place - 1]; add(rp);
   var oH = rc.order.findIndex(function(o){ return o.k === 'H'; }), oM = rc.order.findIndex(function(o){ return o.k === 'M'; });
   plan('p5').ha.race = RACE_PTS[oH]; plan('p5').mi.race = RACE_PTS[oM];
