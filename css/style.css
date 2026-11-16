@@ -384,7 +384,11 @@ body.school #left,body.school #mini,body.school #hint,body.school #mission,body.
 #sc-gmsg{position:absolute;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:#fff;font-weight:800;font-size:17px;border-radius:999px;
   padding:6px 20px;box-shadow:var(--shadow);white-space:nowrap;max-width:calc(100vw - 24px)}
 /* rhythm games: live gauges (自分・ハヤト・ミライ). Rows slide to their place when the order changes */
-#sc-riv{position:absolute;left:14px;top:calc(62px + env(safe-area-inset-top,0px));width:min(360px,42vw);height:134px;pointer-events:none}
+#sc-riv{position:absolute;left:14px;top:calc(62px + env(safe-area-inset-top,0px));width:min(360px,42vw);height:184px;pointer-events:none}
+.sc-rvnow{position:absolute;left:0;top:0;height:42px;display:inline-flex;align-items:center;padding:0 18px;border-radius:999px;background:#fff;border:3px solid var(--or);color:var(--or-d);font-weight:800;font-size:22px;box-shadow:0 4px 0 rgba(120,70,30,.22);white-space:nowrap}
+.sc-rvnow[data-p="1"]{background:var(--yel);border-color:#fff;color:#7a4a00}
+.sc-rvnow.pop{animation:nowpop .5s cubic-bezier(.3,1.6,.5,1)}
+@keyframes nowpop{0%{transform:scale(.6)}60%{transform:scale(1.18)}100%{transform:none}}
 .sc-rv{position:absolute;left:0;right:0;top:0;height:40px;display:flex;align-items:center;gap:8px;background:rgba(255,247,232,.95);border-radius:999px;padding:3px 12px 3px 4px;
   font-weight:800;font-size:15px;box-shadow:0 3px 0 rgba(120,70,30,.18);transition:transform .45s cubic-bezier(.3,1.35,.5,1)}
 .sc-rv.me{background:var(--yel);box-shadow:0 3px 0 var(--yel-d);z-index:1}
@@ -426,3 +430,42 @@ body.school #left,body.school #mini,body.school #hint,body.school #mission,body.
 #sc-tray .sc-go{align-self:center;height:64px}
 
 #sc-hint{bottom:190px}
+
+/* 総合順位 in the corner chip */
+#sc-place{font-weight:800;white-space:nowrap;padding:2px 10px;border-radius:999px;background:#fff;color:var(--or-d);border:2px solid var(--or)}
+#sc-place[data-p="1"]{background:var(--yel);border-color:var(--yel-d);color:#7a4a00}
+#sc-place.pop{animation:nowpop .5s cubic-bezier(.3,1.6,.5,1)}
+/* けっか発表 */
+#sc-fin{position:absolute;inset:0;z-index:30;display:grid;place-items:center;overflow:hidden}
+.sc-fbg{position:absolute;inset:0;background:radial-gradient(circle at 50% 38%,rgba(255,210,60,.35),rgba(20,24,48,.9) 62%);animation:finbg .6s ease both}
+.sc-fbg::before{content:"";position:absolute;left:50%;top:38%;width:220vmax;height:220vmax;margin:-110vmax 0 0 -110vmax;background:repeating-conic-gradient(rgba(255,255,255,.07) 0 10deg,transparent 10deg 20deg);animation:finspin 28s linear infinite}
+@keyframes finbg{from{opacity:0}} @keyframes finspin{to{transform:rotate(360deg)}}
+.sc-fin-in{position:relative;display:grid;justify-items:center;gap:clamp(6px,1.6vh,14px);width:min(760px,94vw);padding:8px}
+.sc-ftitle{font-size:clamp(26px,6vh,46px);font-weight:800;color:#fff;letter-spacing:.12em;text-shadow:0 4px 0 var(--or-d),0 0 24px rgba(255,170,60,.8);animation:popin .5s cubic-bezier(.3,1.6,.5,1) both}
+.sc-fpod{display:flex;align-items:flex-end;justify-content:center;gap:clamp(8px,2vw,18px);width:100%}
+.sc-fcard{flex:1 1 0;max-width:220px;display:grid;justify-items:center;gap:4px;opacity:0;transform:translateY(60px) scale(.7);transition:opacity .35s ease,transform .55s cubic-bezier(.3,1.5,.5,1)}
+.sc-fcard.on{opacity:1;transform:none}
+.sc-fmedal{width:clamp(40px,8vh,58px);height:clamp(40px,8vh,58px);border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:clamp(20px,4.4vh,30px);color:#fff;border:3px solid #fff;box-shadow:0 4px 0 rgba(0,0,0,.25)}
+.sc-fmedal small{font-size:.45em;margin-left:1px}
+.sc-fcard.p1 .sc-fmedal{background:linear-gradient(#ffe27a,#f5a800);color:#6b3d00}
+.sc-fcard.p2 .sc-fmedal{background:linear-gradient(#eef2f6,#aab4c0);color:#3e4650}
+.sc-fcard.p3 .sc-fmedal{background:linear-gradient(#f0b48a,#c9773f)}
+.sc-fava{width:clamp(56px,13vh,104px);height:clamp(56px,13vh,104px);border-radius:50%;overflow:hidden;background:#fff;border:4px solid #fff;box-shadow:0 5px 0 rgba(0,0,0,.25)}
+.sc-fcard.p1 .sc-fava{width:clamp(70px,17vh,132px);height:clamp(70px,17vh,132px);border-color:var(--yel)}
+.sc-fcard.p1.on .sc-fava{animation:wobble 1.4s ease-in-out infinite}
+.sc-fava svg,.sc-fava img{width:100%;height:100%;display:block}
+.sc-fname{font-weight:800;font-size:clamp(15px,3vh,22px);color:#fff;text-shadow:0 2px 0 rgba(0,0,0,.4);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sc-fcard.me .sc-fname{color:var(--yel)}
+.sc-fcard.me .sc-fname::after{content:"（あなた）";font-size:.7em}
+.sc-fpts{font-weight:800;color:#fff;font-size:clamp(13px,2.4vh,17px)} .sc-fpts b{font-size:1.7em;font-variant-numeric:tabular-nums}
+.sc-fstand{width:100%;border-radius:12px 12px 0 0;background:linear-gradient(#fff3d6,#f1cf8e);box-shadow:inset 0 -6px 0 rgba(120,70,30,.18)}
+.sc-fcard.p1 .sc-fstand{height:clamp(34px,9vh,78px);background:linear-gradient(#ffe89a,#f5b62a)} .sc-fcard.p2 .sc-fstand{height:clamp(22px,6vh,52px)} .sc-fcard.p3 .sc-fstand{height:clamp(12px,3.4vh,30px)}
+.sc-fyou{display:grid;justify-items:center;gap:2px;background:#fff;border:4px solid var(--or);border-radius:22px;padding:8px 26px;box-shadow:0 6px 0 rgba(0,0,0,.25);animation:nowpop .6s cubic-bezier(.3,1.6,.5,1) both}
+.sc-fyou b{font-size:clamp(22px,5vh,36px);color:var(--or-d)} .sc-fyou span{font-weight:700;font-size:clamp(13px,2.6vh,18px);color:#4a2f1c}
+.sc-fyou.p1{background:var(--yel);border-color:#fff} .sc-fyou.p1 b{color:#7a4a00}
+.sc-conf{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.sc-conf i{position:absolute;top:-24px;border-radius:2px;opacity:.95;animation:conf linear both}
+@keyframes conf{to{transform:translate(var(--dx),110vh) rotate(var(--rot));opacity:.9}}
+.sc-ffoot{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px 16px;min-height:64px}
+.sc-ffoot .sc-go{width:auto;min-width:200px;margin:0}
+@media (max-height:480px){ .sc-fyou{padding:4px 18px;border-radius:16px} .sc-fin-in{gap:4px} }

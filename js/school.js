@@ -59,11 +59,11 @@ function who(k){ return k === 'P' ? me() : WHO[k]; }
 /* ---------- DOM ---------- */
 var root = document.createElement('div'); root.id = 'sch'; root.hidden = true;
 root.innerHTML =
-  '<div id="sc-chip"><span id="sc-per"></span><span id="sc-sub"></span><span id="sc-pts"></span></div>' +
+  '<div id="sc-chip"><span id="sc-per"></span><span id="sc-sub"></span><span id="sc-pts"></span><span id="sc-place" hidden></span></div>' +
   '<div id="sc-top"><button id="sc-bgm" type="button">♪</button><button id="sc-rst" type="button">最初から</button></div>' +
   '<div id="sc-big" hidden><div id="sc-bign"></div><div id="sc-bigt"></div><div id="sc-bigs"></div></div>' +
   '<div id="sc-note" hidden></div><div id="sc-tap" hidden></div><div id="sc-hint" hidden></div><div id="sc-tray" hidden></div><div id="sc-panel" hidden></div>' +
-  '<div id="sc-game" hidden><div id="sc-gtitle"></div><canvas id="sc-cv"></canvas><div id="sc-gmsg"></div></div><div id="sc-riv" hidden></div>' +
+  '<div id="sc-game" hidden><div id="sc-gtitle"></div><canvas id="sc-cv"></canvas><div id="sc-gmsg"></div></div><div id="sc-riv" hidden></div><div id="sc-fin" hidden></div>' +
   '<div id="sc-dlg" hidden><div id="sc-bub"><div id="sc-ava"></div><div id="sc-dtx"><div id="sc-dname"></div><div id="sc-dtext"></div></div><div id="sc-dnext">▼</div></div></div>';
 document.body.appendChild(root);
 $('sc-bgm').addEventListener('click', function(){ var b = $('bgmbtn'); if (b) b.click(); this.classList.toggle('off', !E.BGM.on); });
@@ -74,7 +74,23 @@ $('sc-rst').addEventListener('click', function(){
 function hud(){
   $('sc-per').textContent = S.period; $('sc-sub').textContent = S.sub; $('sc-sub').hidden = !S.sub;
   $('sc-pts').textContent = S.pts.me + ' 点';
+  var el = $('sc-place'), any = S.pts.me + S.pts.ha + S.pts.mi > 0; el.hidden = !any;      // 総合順位: shown once anyone has points
+  if (any){
+    var pl = 1 + (S.pts.ha > S.pts.me) + (S.pts.mi > S.pts.me);
+    el.textContent = '総合 ' + pl + '位'; el.dataset.p = pl;
+    clearTimeout(hud.t); hud.t = setTimeout(function(){ hud.say(pl); }, 90);     // announce once things settle (my points and the rivals' often land together)
+  }
 }
+hud.say = function(pl){
+  var el = $('sc-place');
+  {
+    if (hud.was && pl !== hud.was){
+      el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+      if ($('sc-riv').hidden && $('sc-fin').hidden){ note(pl < hud.was ? '総合 ' + pl + '位にアップ！' : '総合 ' + pl + '位にダウン…'); if (E.SFX.ready){ if (pl < hud.was){ E.sfxTone(880, .1, 'triangle', .14); E.sfxTone(1319, .2, 'triangle', .14, .09); } else { E.sfxTone(494, .12, 'triangle', .1); E.sfxTone(370, .2, 'triangle', .1, .1); } } }
+    }
+    hud.was = pl;
+  }
+};
 function fadeTo(v){ var f = $('fade'); f.style.transition = 'opacity .45s ease'; f.style.opacity = v; return sleep(480); }
 async function cut(fn){ await fadeTo(1); fn(); await sleep(350); await fadeTo(0); }
 
@@ -150,16 +166,43 @@ async function bell(per, subject, place){
    turns them into a note-by-note run just before the game and stores the exact result back.
    Strength (out of 100): the stronger rival sits a little above a normal run (about 75), the other a little below. */
 var rint = function(a, b){ return a + Math.floor(Math.random()*(b - a + 1)); };   // whole points (rnd() rounds to 5s, which would overshoot these ranges)
+/* Rival strength: one of the two finishes around 1,000 points and the other around 950 (out of 1,100); who is the stronger
+   one is random per play.  Each drops a few points per part (Hayato mostly in the classroom, Mirai mostly in sport), the
+   rover race is the real finishing order, and the last rhythm game (harvest) makes up whatever is still missing. */
+var GOAL = null, LOSS = null, LOSSW = { ha:{ hurdle:.5, train:.7, p3:1.6, p4:1.6, dance:.6 }, mi:{ hurdle:1.6, train:1.4, p3:.5, p4:.5, dance:1.2 } };
+function goals(){
+  if (!GOAL){
+    var st = Math.random() < .5 ? 'ha' : 'mi', wk = st === 'ha' ? 'mi' : 'ha'; GOAL = { strong:st }; GOAL[st] = rint(985, 1015); GOAL[wk] = rint(935, 965);
+    LOSS = {};
+    ['ha', 'mi'].forEach(function(k){
+      var L = (1100 - GOAL[k])*(k === st ? .43 : .55), w = LOSSW[k], tot = 0, o = {}, q;   // what is dropped before the race; the rest is left for race + harvest
+      for (q in w){ o[q] = w[q]*(.8 + Math.random()*.4); tot += o[q]; }
+      for (q in o) o[q] = Math.round(o[q]/tot*L);
+      LOSS[k] = o;
+    });
+  }
+  return GOAL;
+}
+function lost(k, q){ goals(); return LOSS[k][q]; }
 var PLANS = {
-  p1: function(){ return { ha:{ quiz:[100, 100, 200][Math.random()*3|0] }, mi:{ quiz:200 } }; },
-  p2: function(){ return { ha:{ hurdle:rnd(85,100), train:rint(80,88) }, mi:{ hurdle:rnd(40,70), train:rint(55,70) } }; },
-  p3: function(){ return { ha:{ all:rnd(85,125) }, mi:{ all:rnd(125,150) } }; },
-  p4: function(){ return { ha:{ all:rnd(90,130) }, mi:{ all:rnd(110,145) } }; },
-  p5: function(){ return { ha:{ dance:rint(78,88), race:70 }, mi:{ dance:rint(62,76), race:40 } }; },   // race: replaced by the real finishing order
-  p6: function(){ return { ha:{ harvest:rint(62,76), quiz:Math.random() < .7 ? 100 : 0 }, mi:{ harvest:rint(78,88), quiz:100 } }; }
+  p1: function(){ return { ha:{ quiz:200 }, mi:{ quiz:200 } }; },
+  p2: function(){ return { ha:{ hurdle:100 - lost('ha', 'hurdle'), train:100 - lost('ha', 'train') }, mi:{ hurdle:100 - lost('mi', 'hurdle'), train:100 - lost('mi', 'train') } }; },
+  p3: function(){ return { ha:{ all:150 - lost('ha', 'p3') }, mi:{ all:150 - lost('mi', 'p3') } }; },
+  p4: function(){ return { ha:{ all:150 - lost('ha', 'p4') }, mi:{ all:150 - lost('mi', 'p4') } }; },
+  p5: function(){ return { ha:{ dance:100 - lost('ha', 'dance'), race:70 }, mi:{ dance:100 - lost('mi', 'dance'), race:40 } }; },   // race: replaced by the real finishing order
+  p6: function(){ var G = goals(), h = function(k){ return clamp(G[k] - S.pts[k] - 100, 45, 100); };                      // harvest: whatever is still missing for the goal (the quiz is right: +100)
+    return { ha:{ harvest:h('ha'), quiz:100 }, mi:{ harvest:h('mi'), quiz:100 } }; }
 };
 var PLAN = {};
-function lesson(id){ PLAN[id] = PLANS[id](); }
+var PAID = {};
+function lesson(id){ PLAN[id] = PLANS[id](); PAID[id] = {}; }
+/* give the rivals their points for one part of the lesson as soon as that mini-game ends (rank() pays whatever is left),
+   so the 総合順位 in the corner moves during the lesson, not only on the result screen */
+function credit(id, part){
+  var p = plan(id), d = PAID[id] || (PAID[id] = {});
+  ['ha', 'mi'].forEach(function(k){ for (var q in p[k]) if ((!part || q === part) && !d[k + q]){ d[k + q] = 1; S.pts[k] += p[k][q]; } });
+  hud();
+}
 function plan(id){ if (!PLAN[id]) lesson(id); return PLAN[id]; }
 function gains(id){ var p = plan(id), sum = function(o){ var t = 0; for (var k in o) t += o[k]; return t; }; return { ha:sum(p.ha), mi:sum(p.mi) }; }
 /* a rival's run in a rhythm game: one result per note (1 = ピッタリ, .6 = OK, 0 = ミス) that adds up to about `target` points */
@@ -178,7 +221,7 @@ function rivalsFor(id, part, n){
   return out;
 }
 async function rank(id, label, mine, max){
-  var g = gains(id); S.pts.ha += g.ha; S.pts.mi += g.mi;
+  var g = gains(id); credit(id);
   S.log.push({ label:label, me:mine, max:max, ha:g.ha, mi:g.mi });
   var rows = [ { k:'P', n:S.name, g:mine, t:S.pts.me, me:true }, { k:'H', n:'ハヤト', g:g.ha, t:S.pts.ha }, { k:'M', n:'ミライ', g:g.mi, t:S.pts.mi } ];
   rows.sort(function(a, b){ return b.t - a.t; });
@@ -500,13 +543,15 @@ function mkBeats(bars, n){
 var RIV_COL = { P:'#ff8a1e', H:'#3f7fd9', M:'#e86a9a' }, POP_FONT = '"Hiragino Maru Gothic ProN","Hiragino Maru Gothic Pro","Zen Maru Gothic","M PLUS Rounded 1c","BIZ UDPGothic","Meiryo",sans-serif';
 function rivalBoard(runs, n){
   var box = $('sc-riv'), keys = ['P', 'H', 'M'], sum = { P:0, H:0, M:0 }, order = keys.slice(), rows = {}, popT = -9, told = 0;   // told: the player's place in the last pop-up
-  box.innerHTML = keys.map(function(k){
+  box.innerHTML = '<div class="sc-rvnow" id="sc-rvnow"></div>' + keys.map(function(k){
     return '<div class="sc-rv' + (k === 'P' ? ' me' : '') + '" data-k="' + k + '"><span class="sc-rvno"></span><span class="sc-rava">' + face(who(k)) + '</span><span class="sc-rvn">' +
       esc(k === 'P' ? S.name : WHO[k].name) + '</span><span class="sc-rvbar"><i style="background:' + RIV_COL[k] + '"></i></span><span class="sc-rvs">0</span></div>';
   }).join('');
   keys.forEach(function(k){ rows[k] = box.querySelector('[data-k="' + k + '"]'); });
   function show(){
-    order.forEach(function(k, i){ rows[k].style.transform = 'translateY(' + i*46 + 'px)'; rows[k].querySelector('.sc-rvno').textContent = (i + 1) + '位'; });
+    order.forEach(function(k, i){ rows[k].style.transform = 'translateY(' + (50 + i*46) + 'px)'; rows[k].querySelector('.sc-rvno').textContent = (i + 1) + '位'; });
+    var me = order.indexOf('P') + 1, nw = $('sc-rvnow');
+    if (nw && nw.dataset.p !== String(me)){ nw.textContent = 'いま ' + me + '位！'; nw.dataset.p = me; nw.classList.remove('pop'); void nw.offsetWidth; nw.classList.add('pop'); }
     keys.forEach(function(k){ rows[k].querySelector('i').style.width = (sum[k]/n*100) + '%'; rows[k].querySelector('.sc-rvs').textContent = Math.round(sum[k]/n*100); });
   }
   function flash(){ rows.P.classList.remove('up'); void rows.P.offsetWidth; rows.P.classList.add('up'); }
@@ -1229,6 +1274,7 @@ async function p1(){
   await storm;
   await say('M', '先生、下に砂嵐が見えます！');
   if (await quiz(Q.storm)){ got += 100; add(100); }
+  credit('p1', 'quiz');
   await talk([
     ['T', '火星では毎年、大陸くらい広い砂嵐が起きて、何週間も続くんだ。'],
     ['M', '何年かに一度は、星全体をおおう砂嵐になるんですよね。'],
@@ -1256,7 +1302,7 @@ async function p2(){
   var a = await play(hurdleRun('地球の重力（シミュレーション）', 9.81, 4, 9, .3, [1.1, 3.6]), 'sport');
   await say('G', '次は本物の火星の重力だ！');
   var b = await play(hurdleRun('火星の重力（地球の約38％）', 3.73, 5, 18, .3, [1.2, 11]), 'sport');
-  var hp = Math.round((a.cleared + b.cleared)/(a.n + b.n)*100); add(hp);
+  var hp = Math.round((a.cleared + b.cleared)/(a.n + b.n)*100); add(hp); credit('p2', 'hurdle');
   await cut(function(){ scene('ground'); });
   await info('ハードル走のけっか　+' + hp + '点', '地球：' + a.cleared + ' / ' + a.n + ' 台　　火星：' + b.cleared + ' / ' + b.n + ' 台<br>ジャンプの高さ　地球 <b>' + a.top.toFixed(2) + ' m</b> → 火星 <b>' + b.top.toFixed(2) + ' m</b>',
     '火星の重力は地球の約38％。同じ力でとぶと、高さも空中にいる時間も約2.6倍。');
@@ -1266,7 +1312,7 @@ async function p2(){
   var r = await rhythm({ title:'トレーニング：スクワット', bpm:96, beats:bt, color:'#d9534f', glyph:'●', genre:'rock',
     rivals:rivalsFor('p2', 'train', bt.length), onRival:function(k, v){ if (v) NPC[k].squat = 1; },
     onHit:function(){ pose.squat = 1; cheer(); } });
-  var tp = Math.round(r*100); add(tp);
+  var tp = Math.round(r*100); add(tp); credit('p2', 'train');
   await info('トレーニングのけっか　+' + tp + '点', '', '国際宇宙ステーション（ISS）では、毎日約2時間の運動をします（NASA）。');
   await rank('p2', '2時間目', hp + tp, 200);
 }
@@ -1345,7 +1391,7 @@ async function p5(){
     rivals:rivalsFor('p5', 'dance', bt.length),
     onRival:function(k, v, i){ var c = NPC[k]; if (!v) return; c.hop = 1; if (i%4 === 3) c.spin = 1; else if (c.spin){ c.spin = 0; c.root.rotation.y = c.face; } },
     onHit:function(i){ pose.hop = 1; pose.spin = i%4 === 3 ? 1 : 0; cheer(); } });
-  var dp = Math.round(r*100); add(dp);
+  var dp = Math.round(r*100); add(dp); credit('p5', 'dance');
   await say('H', (dp >= 50 ? 'いいリズム！' : 'ドンマイ！') + '（+' + dp + '点）次はオレの得意なやつだ！');
   await cut(function(){
     raceCleanup(); outdoor(.62); var s = W(RACE_L[0][0], RACE_L[0][1]), a = Math.atan2(W(1, 0).x - W(0, 0).x, W(1, 0).z - W(0, 0).z);   // a: world heading of the course
@@ -1361,7 +1407,7 @@ async function p5(){
   var rc = await play(race(), 'sport');
   var rp = RACE_PTS[rc.place - 1]; add(rp);
   var oH = rc.order.findIndex(function(o){ return o.k === 'H'; }), oM = rc.order.findIndex(function(o){ return o.k === 'M'; });
-  plan('p5').ha.race = RACE_PTS[oH]; plan('p5').mi.race = RACE_PTS[oM];
+  plan('p5').ha.race = RACE_PTS[oH]; plan('p5').mi.race = RACE_PTS[oM]; credit('p5', 'race');
   await cut(function(){
     outdoor(.62); var f = RACE_L[RACE_L.length-1], a = Math.atan2(W(1, 0).x - W(0, 0).x, W(1, 0).z - W(0, 0).z), c = W(f[0] + 21, f[1]);
     setP(W(f[0] + 22, f[1]), a); put(NPC.T, W(f[0] + 20.5, f[1] + 3.2), a); put(NPC.H, W(f[0] + 21, f[1] - 2.8), a); put(NPC.M, W(f[0] + 20, f[1] - 5), a);
@@ -1390,10 +1436,51 @@ async function p6(){
   var r = await rhythm({ title:'収穫：リズムよくとろう', bpm:100, beats:bt, color:'#4caf6a', glyph:'★', genre:'pop',
     rivals:rivalsFor('p6', 'harvest', bt.length), onRival:function(k, v){ if (v) NPC[k].pick = 1; },
     onHit:function(i){ var m = crops[i % crops.length]; if (m){ m.visible = false; var wp = new T.Vector3(); m.getWorldPosition(wp); E.puff(wp.x, wp.y, wp.z, .3, .8); } pose.hop = 1; pose.spin = 0; } });
-  var hp = Math.round(r*100); add(hp);
+  var hp = Math.round(r*100); add(hp); credit('p6', 'harvest');
   await say('G', 'たくさんとれました！（+' + hp + '点）ではさいごに問題です。');
   var qp = 0; if (await quiz(Q.grow)){ qp = 100; add(100); }
   await rank('p6', '6時間目', hp + qp, 200);
+}
+/* ---------- けっか発表: drum roll, 3位 → 2位 → 1位 one by one, then confetti and the player's place in big letters ---------- */
+function drum(sec){                                         // a snare roll that speeds up, ending on a cymbal-like hit
+  if (!E.SFX.ready) return;
+  for (var t = 0, gap = .11; t < sec; t += gap, gap = Math.max(.035, gap*.93)) E.sfxNoise(.05, 'bandpass', 1900, .16 + .2*t/sec, t);
+  E.sfxNoise(.7, 'highpass', 5200, .4, sec); E.sfxTone(98, .5, 'sine', .4, sec, 55);
+}
+function confetti(box, n){
+  var cols = ['#ff8a1e', '#ffd23c', '#2fb5a8', '#e86a9a', '#3f7fd9', '#7ac74f', '#ffffff'], h = '';
+  for (var i=0;i<n;i++) h += '<i style="left:' + (Math.random()*100).toFixed(1) + '%;background:' + cols[i%cols.length] + ';animation-delay:' + (Math.random()*.9).toFixed(2) + 's;animation-duration:' +
+    (2.2 + Math.random()*1.8).toFixed(2) + 's;--dx:' + ((Math.random() - .5)*160).toFixed(0) + 'px;--rot:' + (360 + Math.random()*720).toFixed(0) + 'deg;width:' + (8 + Math.random()*8).toFixed(0) + 'px;height:' + (10 + Math.random()*10).toFixed(0) + 'px"></i>';
+  var c = document.createElement('div'); c.className = 'sc-conf'; c.innerHTML = h; box.appendChild(c);
+}
+async function finale(rows, my){
+  var box = $('sc-fin'), was = mood('talk');
+  box.innerHTML = '<div class="sc-fbg"></div><div class="sc-fin-in"><div class="sc-ftitle">けっか発表</div><div class="sc-fpod">' +
+    [1, 0, 2].map(function(i){ var r = rows[i];                    // podium order on screen: 2位 ・ 1位 ・ 3位
+      return '<div class="sc-fcard p' + (i + 1) + (r.me ? ' me' : '') + '" data-i="' + i + '"><div class="sc-fmedal">' + (i + 1) + '<small>位</small></div><div class="sc-fava">' + face(who(r.k)) + '</div>' +
+        '<div class="sc-fname">' + esc(r.n) + '</div><div class="sc-fpts"><b data-to="' + r.t + '">0</b> 点</div><div class="sc-fstand"></div></div>'; }).join('') +
+    '</div><div class="sc-ffoot"><div class="sc-fyou" hidden></div><button type="button" class="sc-go" id="sc-fok" hidden>通知表を見る</button></div></div>';
+  box.hidden = false; duck(true);
+  var card = function(i){ return box.querySelector('.sc-fcard[data-i="' + i + '"]'); };
+  var countUp = function(el){ var to = +el.dataset.to, t0 = performance.now(); (function f(){ var u = Math.min(1, (performance.now() - t0)/900); el.textContent = Math.round(to*(1 - Math.pow(1 - u, 3))); if (u < 1) requestAnimationFrame(f); })(); };
+  var reveal = async function(i, roll){
+    drum(roll); await sleep(roll*1000);
+    var c = card(i); c.classList.add('on'); countUp(c.querySelector('b'));
+    if (i === 0){ E.sfx('fanfare'); [1047, 1319, 1568, 2093].forEach(function(f, n){ E.sfxTone(f, .5, 'triangle', .18, .45 + n*.12); }); confetti(box, 90); emote(rows[0].k, 'joy'); allHop(); if (rows[0].me) pose.hop = 1; }
+    else { E.sfx('ok'); emote(rows[i].k, i === 2 ? 'nod' : 'joy'); }
+  };
+  await sleep(700);
+  await reveal(2, 1.1); await sleep(900);
+  await reveal(1, 1.3); await sleep(1000);
+  await reveal(0, 2.2); await sleep(1300);
+  var you = box.querySelector('.sc-fyou');
+  you.innerHTML = (my === 1 ? '<b>' + esc(S.name) + 'さんが 1位！</b><span>最優秀賞　おめでとう！</span>' : my === 2 ? '<b>' + esc(S.name) + 'さんは 2位！</b><span>1位まで あと ' + (rows[0].t - S.pts.me) + ' 点</span>'
+    : '<b>' + esc(S.name) + 'さんは 3位</b><span>2位まで あと ' + (rows[1].t - S.pts.me) + ' 点。次はぬかそう！</span>');
+  you.hidden = false; you.className = 'sc-fyou p' + my; if (my === 1){ confetti(box, 60); E.sfx('coin'); } else E.sfx('pop');
+  await sleep(900);
+  var ok = $('sc-fok'); ok.hidden = false;
+  await new Promise(function(res){ ok.addEventListener('click', function(){ E.sfx('click'); res(); }); });
+  box.hidden = true; box.innerHTML = ''; duck(false); mood(was);
 }
 async function closing(){
   await cut(function(){ scene('sunset'); });
@@ -1405,6 +1492,7 @@ async function closing(){
   ].concat(S.items.indexOf('window') >= 0 ? [['T', '{n}さんの部屋の窓からも、あの光が見えるぞ。']] : []));
   var rows = [ { k:'P', n:S.name, t:S.pts.me, me:true }, { k:'H', n:'ハヤト', t:S.pts.ha }, { k:'M', n:'ミライ', t:S.pts.mi } ].sort(function(a, b){ return b.t - a.t; });
   var my = rows.findIndex(function(r){ return r.me; }) + 1;
+  await finale(rows, my);
   E.sfx('fanfare'); allHop(); pose.hop = 1;
   panel('<h2>火星修学旅行　通知表</h2><div class="sc-final"><div class="sc-rank">' + rows.map(function(r, i){
       return '<div class="sc-row' + (r.me ? ' me' : '') + '"><span class="sc-no">' + (i+1) + '位</span><span class="sc-rava">' + face(who(r.k)) + '</span><span class="sc-rn">' + esc(r.n) + '</span><span class="sc-rt">' + r.t + '点</span></div>';
