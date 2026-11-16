@@ -1697,7 +1697,7 @@ function introUpdate(dt){
     if (G.alt < 30 && Math.random() < dt*14) puff(LANDER.x+(Math.random()-.5)*7, PAD_Y, LANDER.z+(Math.random()-.5)*7, 1.6, 9);
     if (G.alt <= 0){ G.alt = 0; G.phase = 'touch'; G.t = 0; sfx('touchdown'); for (var i=0;i<16;i++) puff(LANDER.x+(Math.random()-.5)*8, PAD_Y, LANDER.z+(Math.random()-.5)*8, 2, 10); }
   } else if (ph === 'touch'){
-    if (G.t > 1.6){ if (SCH.on){ stepOut(); G.phase = 'school'; if (SCH.onLanded) SCH.onLanded(); } else landed(); return; }
+    if (G.t > 1.6){ if (SCH.on){ G.phase = 'landhold'; if (SCH.onLanded) SCH.onLanded(); } else landed(); return; }   // school: keep the lander shot; the lesson fades out, then calls stepOut
   }
   var hover = G.alt > 0 ? Math.sin(performance.now()/700)*.6 : 0;
   lander.position.y = PAD_Y + G.alt + hover;
@@ -2030,6 +2030,7 @@ function bgmInit(){
   if (BGM.ctx) { if (BGM.ctx.state === 'suspended') BGM.ctx.resume(); return; }
   var AC = window.AudioContext || window.webkitAudioContext; if (!AC || !window.MARS_BGM) return;
   BGM.ctx = new AC(); BGM.gain = BGM.ctx.createGain(); BGM.gain.gain.value = BGM.on ? BGM.vol : 0;
+  BGM.trk = BGM.ctx.createGain(); BGM.trk.connect(BGM.gain);          // the recorded tracks only (school mode fades this out during quizzes / mini-games)
   BGM.an = BGM.ctx.createAnalyser(); BGM.an.fftSize = 512; BGM.gain.connect(BGM.an); BGM.an.connect(BGM.ctx.destination);   // analyser = proof the music is really sounding (debug meter)
   bgmPlay(BGM.want); sfxInit();
 }
@@ -2063,7 +2064,7 @@ function bgmPlay(name){
 }
 function bgmQueue(name, buf, at, fadeIn){
   var XF = 3.5, ctx = BGM.ctx, s = ctx.createBufferSource(), g = ctx.createGain();
-  s.buffer = buf; s.connect(g); g.connect(BGM.gain);
+  s.buffer = buf; s.connect(g); g.connect(BGM.trk);
   g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(1, at + fadeIn);
   var end = at + buf.duration;
   g.gain.setValueAtTime(1, end - XF); g.gain.linearRampToValueAtTime(0, end);   // fade out while the next copy fades in
@@ -2509,7 +2510,7 @@ if (window.MARS_SCHOOL) window.MARS_SCHOOL({
   astro:astro, body:body, helmet:helmet, backpack:back, player:player, makeChara:makeChara, portrait:portrait, thumb:thumb, PROPS:PROPS, EMBLEMS:EMBLEMS, armL:armL, armR:armR, legL:legL, legR:legR, M_SUIT:M_SUIT, M_GREY:M_GREY, part:part,
   lettuce:lettuce, tomato:tomato, dish:dish, DISH_ROT0:DISH_ROT0, M_SOLAR_FIELD:M_SOLAR_FIELD, rover:rover, lander:lander, seedCase:seedCase,
   b2w:baseToWorld, groundAt:groundAt, solids:solids, bigRocks:bigRocks, puff:puff, sfx:sfx, sfxTone:sfxTone, sfxNoise:sfxNoise, setGuide:setGuide, setWeatherMode:setWeatherMode,
-  setIndoor:setIndoor, enterRover:enterRover, exitRover:exitRover, setView:setView, siteMarks:siteMarks, bgmPlay:bgmPlay, bgmInit:bgmInit,
+  setIndoor:setIndoor, enterRover:enterRover, exitRover:exitRover, setView:setView, siteMarks:siteMarks, bgmPlay:bgmPlay, bgmInit:bgmInit, stepOut:stepOut,
   sunDir:sunDir, interior:interior, propIn:propIn,
   setTime:function(v){ tDay = v; }, setGravity:function(g){ gravity = g; }, jump:function(){ wantJump = true; },
   setPhase:function(ph){ G.phase = ph; G.t = 0; }, restart:restartGame, freeRoam:skipToFree

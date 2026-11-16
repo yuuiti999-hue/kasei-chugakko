@@ -117,6 +117,7 @@ function fold(t){ return typeof t === 'string' ? t : t[0] + '<span class="sc-mor
 /* three-choice quiz: always explains why, then moves on (no time limit) */
 function quiz(q){
   return new Promise(function(res){
+    var was = mood('quiz');
     var p = panel('<h2>' + q.title + '</h2>' + (q.q ? '<div class="sc-body">' + q.q + '</div>' : '') + '<div class="sc-opts">' +
       q.opts.map(function(o, i){ return '<button type="button" data-i="' + i + '"><b>' + 'ABC'[i] + '</b>' + esc(o) + '</button>'; }).join('') + '</div>', 'low');
     Array.prototype.forEach.call(p.querySelectorAll('.sc-opts button'), function(b){
@@ -129,7 +130,7 @@ function quiz(q){
           (/sc-more/.test(html + tip) ? '<button type="button" class="sc-mbtn" id="sc-mbtn">くわしく</button>' : '') + nextBtn(), 'low');
         var mb = $('sc-mbtn');
         if (mb) mb.addEventListener('click', function(){ E.sfx('click'); Array.prototype.forEach.call(pp.querySelectorAll('.sc-more'), function(s){ s.hidden = false; }); mb.hidden = true; });
-        await waitOk(); res(ok);
+        await waitOk(); mood(was === 'quiz' ? 'talk' : was); res(ok);
       });
     });
   });
@@ -215,6 +216,22 @@ function lineUp(gap){
   var f = P.face, rx = Math.cos(f), rz = -Math.sin(f);
   [['H', -gap], ['M', gap]].forEach(function(q){ put(NPC[q[0]], { x:P.x + rx*q[1], z:P.z + rz*q[1] }, f); });
 }
+/* low gravity made visible: the same push-off as on Earth, but 3.73 m/s² — about 2.6x the height and 2.6x the hang time */
+function lowG(k, n){
+  var p = NPC[k]; if (!p || !p.root.visible) return;
+  var g = 3.73, v0 = 3.1, T0 = 2*v0/g, t = -.25, left = n;
+  E.sfx('jump');
+  var tick = function(dt){
+    t += dt; if (t < 0){ p.squat = .5; return; }                // a short crouch before each take-off
+    if (t >= T0){
+      p.fly = 0; left--; E.sfx('land'); E.puff(p.root.position.x, p.root.position.y + .1, p.root.position.z, .5, .9);
+      if (left <= 0 || !p.root.visible){ tickers.splice(tickers.indexOf(tick), 1); return; }
+      t = -.3; setTimeout(function(){ E.sfx('jump'); }, 280); return;
+    }
+    p.fly = v0*t - .5*g*t*t; p.hop = .5;                        // arms up while in the air
+  };
+  tickers.push(tick);
+}
 function cheer(){ ['T', 'G'].forEach(function(k){ var c = NPC[k]; if (c && c.root.visible) c.hop = 1; }); }   // the teacher and the crew bounce along with the player's hits
 function hideNPCs(){ people.forEach(function(c){ c.root.visible = false; }); }
 function setP(pos, faceA){
@@ -282,7 +299,7 @@ SCH.tick = function(dt){
     if (p.pick > 0){ p.pick = Math.max(0, p.pick - dt*2.6); var pk = Math.sin(Math.min(1, p.pick)*Math.PI); c.body.rotation.x = .55*pk; c.armL.rotation.x = c.armR.rotation.x = -1.2*pk; mv -= .05*pk; }
     if (p.spin){ p.root.rotation.y = p.face + (1 - p.hop)*6.2832; if (!p.hop){ p.root.rotation.y = p.face; p.spin = 0; } }
     var y = applyAct(c, p.act, dt, now);
-    p.body.position.y = Math.sin(now*2 + p.ph)*.012 + hu*.22 + y + bounce + mv - (p.sit ? .26 : 0);
+    p.body.position.y = Math.sin(now*2 + p.ph)*.012 + hu*.22 + y + bounce + mv + (p.fly || 0) - (p.sit ? .26 : 0);
   }
   for (i=0;i<tickers.length;i++) tickers[i](dt);
 };
@@ -381,6 +398,58 @@ var TUNES = {
   techno: { name:'テクノ',   root:57, scale:[0,2,3,7,10], wave:'square',   vol:.045, mel:[0,2,4,2,0,2,4,2, 1,3,4,3,1,3,4,3] }
 };
 function hz(m){ return 440*Math.pow(2, (m-69)/12); }
+/* ---------- BGM moods: talk = the recorded theme; quiz / game = synthesised loops, so story and play sound different.
+   Everything here goes through BGM.gain, so the ♪ button and the rhythm games' duck() silence it too. ---------- */
+var LOOPS = {
+  quiz: { bpm:104, lead:'triangle', lv:.24, bv:.30, hat:.06, kick:0,                 // light 'thinking time' pizzicato
+    chords:[[60,64,67],[57,60,64],[53,57,60],[55,59,62]], bass:[36,33,29,31],
+    arp:[0,null,1,null,2,null,1,null] },
+  game: { bpm:144, lead:'square', lv:.085, bv:.26, hat:.10, kick:.45,                   // driving 8-bit run
+    chords:[[57,60,64],[53,57,60],[60,64,67],[55,59,62]], bass:[33,29,36,31],
+    arp:[0,1,2,1,0,1,2,3] }
+};
+var MOOD = { cur:'talk', out:null, timer:0, next:0, step:0 };
+function moodNote(freq, dur, type, vol, at){
+  var ctx = E.BGM.ctx, o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, at);
+  g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(vol, at + .012); g.gain.exponentialRampToValueAtTime(.001, at + dur);
+  o.connect(g); g.connect(MOOD.out); o.start(at); o.stop(at + dur + .05);
+}
+function moodHit(dur, freq, vol, at){
+  if (!E.SFX.noise) return;
+  var ctx = E.BGM.ctx, s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+  s.buffer = E.SFX.noise; f.type = 'highpass'; f.frequency.value = freq;
+  g.gain.setValueAtTime(vol, at); g.gain.exponentialRampToValueAtTime(.001, at + dur);
+  s.connect(f); f.connect(g); g.connect(MOOD.out); s.start(at, Math.random()); s.stop(at + dur + .02);
+}
+function moodPump(){
+  var L = LOOPS[MOOD.cur], ctx = E.BGM.ctx; if (!L || !ctx) return;
+  var sp = 60/L.bpm/2, now = ctx.currentTime;                 // one step = an eighth note
+  if (MOOD.next < now) MOOD.next = now + .06;                 // first run, or the tab was in the background
+  while (MOOD.next < now + .7){                              // generous look-ahead: a 3D frame hitch must not leave a hole in the music
+    var st = MOOD.step++, at = MOOD.next, i = st%8, bar = (st/8|0)%4, ch = L.chords[bar], d = L.arp[i];
+    if (d != null) moodNote(hz((d === 3 ? ch[0] + 12 : ch[d]) + 12), sp*.9, L.lead, L.lv, at);
+    if (i%4 === 0) moodNote(hz(L.bass[bar]), sp*1.8, 'sine', L.bv, at);
+    else if (L.kick && i%2 === 0) moodNote(hz(L.bass[bar] + 12), sp*.8, 'sine', L.bv*.6, at);
+    if (L.kick && i%2 === 0){ var ctx2 = ctx, o = ctx2.createOscillator(), g = ctx2.createGain(); o.frequency.setValueAtTime(130, at); o.frequency.exponentialRampToValueAtTime(45, at + .12);
+      g.gain.setValueAtTime(L.kick, at); g.gain.exponentialRampToValueAtTime(.001, at + .14); o.connect(g); g.connect(MOOD.out); o.start(at); o.stop(at + .16); }
+    moodHit(i%2 ? .05 : .025, 6500, i%2 ? L.hat : L.hat*.5, at);
+    MOOD.next += sp;
+  }
+}
+function mood(name){                                        // 'talk' | 'quiz' | 'game'
+  var B = E.BGM, prev = MOOD.cur; if (name === prev) return prev;
+  MOOD.cur = name; clearInterval(MOOD.timer); MOOD.timer = 0;
+  if (!B.ctx || !B.trk) return prev;                           // no sound yet: remember the mood only
+  var t = B.ctx.currentTime;
+  if (!MOOD.out){ MOOD.out = B.ctx.createGain(); MOOD.out.gain.value = 0; MOOD.out.connect(B.gain); }
+  B.trk.gain.setTargetAtTime(name === 'talk' ? 1 : 0, t, name === 'talk' ? .5 : .12);
+  MOOD.out.gain.cancelScheduledValues(t); MOOD.out.gain.setValueAtTime(MOOD.out.gain.value, t);
+  if (name === 'talk') MOOD.out.gain.setTargetAtTime(0, t, .08);
+  else { MOOD.out.gain.setTargetAtTime(1.3, t, .05); MOOD.step = 0; MOOD.next = 0; moodPump(); MOOD.timer = setInterval(moodPump, 90); }
+  return prev;
+}
+function play(pr){ var was = mood('game'); return pr.then(function(v){ mood(was === 'game' ? 'talk' : was); return v; }); }   // wrap a mini-game: game music while it runs
 function music(key, bpm, lead, beats){
   if (!E.BGM.ctx) return;
   var t = TUNES[key], spb = 60/bpm, bars = Math.ceil(beats/4), bass = [0, 0, 5, 7];
@@ -575,15 +644,29 @@ function hurdleRun(label, grav, n, gap, hh, zone){
 }
 
 /* ---------- mini-game: stop the gauge at the line ---------- */
+function riser(kind){                                      // a tone that climbs with the gauge; kind 0 seeds / 1 water / 2 nutrients
+  var ctx = E.BGM.ctx; if (!ctx || !E.SFX.ready) return null;
+  var o = ctx.createOscillator(), o2 = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain(), lfo = ctx.createOscillator(), lg = ctx.createGain();
+  o.type = kind === 2 ? 'sawtooth' : 'triangle'; o2.type = 'sine'; f.type = 'lowpass'; f.frequency.value = 900; g.gain.value = 0;
+  lfo.frequency.value = kind === 1 ? 11 : 6; lg.gain.value = kind === 1 ? 14 : 4; lfo.connect(lg); lg.connect(o.frequency);   // water wobbles more
+  o.connect(f); o2.connect(f); f.connect(g); g.connect(E.SFX.bus); o.start(); o2.start(); lfo.start();
+  var base = [150, 130, 170][kind] || 150;
+  return {
+    set:function(lvl){ var t = ctx.currentTime, k = lvl/100, fr = base*Math.pow(2, k*2.2);        // a little over two octaves from empty to full
+      o.frequency.setTargetAtTime(fr, t, .03); o2.frequency.setTargetAtTime(fr*2, t, .03); f.frequency.setTargetAtTime(700 + k*2600, t, .05);
+      g.gain.setTargetAtTime(lvl > 0 ? (kind === 2 ? .07 : .13) : 0, t, .04); },
+    stop:function(){ var t = ctx.currentTime; g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(0, t, .03); o.stop(t + .25); o2.stop(t + .25); lfo.stop(t + .25); }
+  };
+}
 function gauge(rounds){
   return new Promise(function(res){
     var r = 0, total = 0;
     function round(){
-      var R = rounds[r], lvl = 0, run = true, t0 = performance.now();
+      var R = rounds[r], lvl = 0, run = true, t0 = performance.now(), snd = riser(r%3);
       var p = panel('<h2>' + R.name + '（' + (r+1) + ' / ' + rounds.length + '）</h2><div class="sc-body">線のところで止めよう。タップでストップ！</div>' +
         '<div class="sc-gauge"><div class="sc-tube"><i id="sc-fill"></i><em style="bottom:' + (R.target - R.band) + '%;height:' + (R.band*2) + '%"></em></div><div id="sc-gres">　</div></div>', 'tap');
       function stop(e){
-        if (e) e.preventDefault(); if (!run) return; run = false; p.removeEventListener('pointerdown', stop); window.removeEventListener('keydown', key);
+        if (e) e.preventDefault(); if (!run) return; run = false; if (snd) snd.stop(); p.removeEventListener('pointerdown', stop); window.removeEventListener('keydown', key);
         var err = Math.abs(lvl - R.target), sc = lvl >= 100 ? 0 : clamp(1 - Math.max(0, err - R.band)/22, 0, 1); total += sc;
         E.sfx(sc > .8 ? 'ok' : sc > .3 ? 'pop' : 'bad');
         $('sc-gres').textContent = lvl >= 100 ? 'こぼれた！' : sc > .95 ? 'ピッタリ！' : sc > .6 ? 'おしい！' : lvl < R.target ? '少なすぎた…' : '多すぎた…';
@@ -594,7 +677,7 @@ function gauge(rounds){
       (function step(){
         if (!run) return;
         lvl = Math.min(100, (performance.now() - t0 - 500)/1000/R.sec*100); if (lvl < 0) lvl = 0;
-        var f = $('sc-fill'); if (!f) return; f.style.height = lvl + '%';
+        var f = $('sc-fill'); if (!f){ if (snd) snd.stop(); return; } f.style.height = lvl + '%'; if (snd) snd.set(lvl);
         if (lvl >= 100) stop(); else requestAnimationFrame(step);
       })();
     }
@@ -1062,7 +1145,7 @@ var Q = {
     tip:'探査車パーサヴィアランスは、降下中に自動で危険をよけて着陸しました（NASA）。' },
   storm: { title:'砂嵐が来た！ いつ降りる？', q:'', opts:['今すぐ降りる', '砂嵐が弱まってから降りる', 'エンジンを止めて一気に降りる'], ans:1,
     why:['砂で地面が見えず、岩や斜面をよけられません。', '砂嵐が弱まるまで上空で待つのが安全です。', 'エンジンを止めると激突します。空気がうすく、パラシュートだけでは止まれません。'],
-    tip:'火星では、星全体をおおう砂嵐が起きることもあります。' },
+    tip:'星全体をおおう砂嵐は、平均で火星の3年（地球の約5年半）に1回（NASA）。' },
   grow: { title:'どうして早く育つの？', q:'火星の畑の野菜が、早く育つ理由は？', opts:['品種改良をしたから', '土に錆（さび）があるから', '空気が乾燥しているから'], ans:0,
     why:[['せまい場所で早く収穫できるよう、小さく育つ品種をえらび、改良しています。', '光はLED、水と養分は機械で調整します。'],
          '砂が赤いのは錆（酸化鉄）のせい。栄養にならず、有害な成分もあります。',
@@ -1123,11 +1206,20 @@ async function p1(){
   await storm;
   await say('M', '先生、下に砂嵐が見えます！');
   if (await quiz(Q.storm)){ got += 100; add(100); }
+  await talk([
+    ['T', '火星では毎年、大陸くらい広い砂嵐が起きて、何週間も続くんだ。'],
+    ['M', '何年かに一度は、星全体をおおう砂嵐になるんですよね。'],
+    ['T', '空気がうすいから風の力は弱い。でも砂が太陽の光をさえぎる。'],
+    ['T', 'ソーラーパネルで電気を作れなくなるのが、一番こわいんだ。']
+  ]);
   E.setPhase('wait'); E.setWeatherMode('clear'); S.sub = '砂嵐が弱まるのを待っています…'; hud();
   await landed;
-  await cut(function(){ scene('arrive'); S.sub = '着陸'; hud(); });
+  await cut(function(){ E.stepOut(); E.setPhase('school'); scene('arrive'); S.sub = '着陸'; hud(); });
   await talk([
-    ['T', '着陸成功！ 空がうすいオレンジ色なのは、細かい砂がまっているからだ。'],
+    ['T', '着陸成功！ 空がうすいオレンジ色なのは、細かい砂がまっているからだ。']
+  ]);
+  lowG('H', 3);                                        // Hayato floats up while he says it
+  await talk([
     ['H', 'うわ、体が軽い！'],
     ['T', '火星では、外に出るときは必ず2人以上で行動するのがきまりだぞ。']
   ]);
@@ -1138,9 +1230,9 @@ async function p2(){
   await cut(function(){ scene('ground'); });
   await bell('2時間目', '体育', 'グラウンド');
   await say('G', '地球と火星で、ジャンプをくらべるぞ！');
-  var a = await hurdleRun('地球の重力（シミュレーション）', 9.81, 4, 9, .3, [1.1, 3.6]);
+  var a = await play(hurdleRun('地球の重力（シミュレーション）', 9.81, 4, 9, .3, [1.1, 3.6]));
   await say('G', '次は本物の火星の重力だ！');
-  var b = await hurdleRun('火星の重力（地球の約38％）', 3.73, 5, 18, .3, [1.2, 11]);
+  var b = await play(hurdleRun('火星の重力（地球の約38％）', 3.73, 5, 18, .3, [1.2, 11]));
   var hp = Math.round((a.cleared + b.cleared)/(a.n + b.n)*100); add(hp);
   await cut(function(){ scene('ground'); });
   await info('ハードル走のけっか　+' + hp + '点', '地球：' + a.cleared + ' / ' + a.n + ' 台　　火星：' + b.cleared + ' / ' + b.n + ' 台<br>ジャンプの高さ　地球 <b>' + a.top.toFixed(2) + ' m</b> → 火星 <b>' + b.top.toFixed(2) + ' m</b>',
@@ -1163,7 +1255,7 @@ async function p3(){
     ['G', '基地の電気は、このソーラーパネルで作っています。'],
     ['G', 'でも火星にとどく太陽の光は、地球の約43％。大事に使います。']
   ]);
-  var w = await wires();
+  var w = await play(wires());
   var wp = w.helped ? 30 : Math.round(clamp(100 - Math.max(0, w.sec - 20)*1.5, 40, 100)); add(wp);
   E.M_SOLAR_FIELD.color.setHex(0x1a3470); E.M_SOLAR_FIELD.roughness = .25; E.M_SOLAR_FIELD.metalness = .7;
   var c = E.COMMS_POS, c2 = W(-18, -18); setShot({ x:c.x, y:E.groundAt(c.x, c.z)+2.4, z:c.z, yaw:Math.atan2(c2.x - c.x, c2.z - c.z), pitch:.22, dist:12, ease:true });
@@ -1185,7 +1277,7 @@ async function p4(){
     ['G', '外は寒くて空気もうすいので、野菜は基地の中で育てます。'],
     ['G', '種も水も、地球から運んだ大切なものです。']
   ]);
-  var gr = await gauge([{ name:'レタスの種をまく', target:62, band:5, sec:2.4 }, { name:'水をあげる', target:48, band:4, sec:1.9 }, { name:'養分をまぜる', target:74, band:4, sec:1.5 }]);
+  var gr = await play(gauge([{ name:'レタスの種をまく', target:62, band:5, sec:2.4 }, { name:'水をあげる', target:48, band:4, sec:1.9 }, { name:'養分をまぜる', target:74, band:4, sec:1.5 }]));
   var gp = Math.round(gr*100); add(gp);
   E.lettuce.slice(0, 7).forEach(function(m){ m.visible = true; m.scale.setScalar(.14); }); allHop();
   await say('G', '上手にまけました！（+' + gp + '点）芽が出るまで数日、食べられるのは約1か月後です。');
@@ -1199,7 +1291,7 @@ async function p4(){
     ['G', 'さいごは「住」。ISSの個室は、電話ボックスくらいしかありません（NASA）。'],
     ['G', '持ってこられる荷物は少しだけ。家具は4こまでです。']
   ]);
-  await roomGame();
+  await play(roomGame());
   add(50);
   await say('G', S.items.indexOf('window') >= 0 ? 'いい部屋ですね！ その窓から、夕方には地球が見えますよ。' : 'いい部屋ですね！');
   await rank('p4', '4時間目', gp + 50, 150);
@@ -1243,7 +1335,7 @@ async function p5(){
     ['T', 'ローバーは最高でも時速10km。重力が弱く、タイヤがすべりやすいぞ。'],
     ['T', '砂地は近道だけど、おそくなる。よけるか、つっこむかはきみしだい！']
   ]);
-  var rc = await race();
+  var rc = await play(race());
   var rp = RACE_PTS[rc.place - 1]; add(rp);
   var oH = rc.order.findIndex(function(o){ return o.k === 'H'; }), oM = rc.order.findIndex(function(o){ return o.k === 'M'; });
   plan('p5').ha.race = RACE_PTS[oH]; plan('p5').mi.race = RACE_PTS[oM];
@@ -1320,7 +1412,7 @@ async function start(skipTo){
   for (var j=0;j<PERIODS.length;j++) await PERIODS[j]();
 }
 window.__sch = { E:E, S:S, W:W, RACE_L:RACE_L, sceneRoom:sceneRoom, roomGame:roomGame, sceneCafe:sceneCafe, scene:scene, pose:pose, room:function(){ return ROOM; },
-  PLAN:PLAN, NPC:NPC, autoRhythm:0 };
+  PLAN:PLAN, NPC:NPC, autoRhythm:0, MOOD:MOOD, mood:mood };
 window.MARS_SCHOOL_START = function(){ start(0).catch(function(e){ console.error(e); }); };
 /* debug: on the title screen, Shift+2 … Shift+8 jumps to that part */
 window.addEventListener('keydown', function(e){ var d = /^Digit([2-8])$/.exec(e.code); if (d && e.shiftKey && !SCH.on && !$('titlecard').hidden) start(+d[1]).catch(function(x){ console.error(x); }); });
